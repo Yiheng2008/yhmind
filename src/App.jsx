@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
+import MindMapThumbnail from "./components/MindMapThumbnail";
 import {
   ReactFlow,
   Background,
@@ -204,6 +205,7 @@ function AuthScreen() {
 
 function Dashboard({ session, onOpenMap }) {
   const [mindmaps, setMindmaps] = useState([]);
+  const [dialog, setDialog] = useState(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [showFavorites, setShowFavorites] = useState(false);
@@ -216,8 +218,8 @@ const loadMindmaps = async () => {
     await supabase
       .from("mindmaps")
       .select(
-        "id, title, is_favorite, created_at, updated_at, user_id"
-      )
+  "id, title, is_favorite, created_at, updated_at, user_id, nodes, edges"
+)
       .order("updated_at", {
         ascending: false,
       });
@@ -287,7 +289,11 @@ const loadMindmaps = async () => {
 
     if (error) {
       console.error(error);
-      alert("创建失败：" + error.message);
+     setDialog({
+  type: "message",
+  title: "创建失败",
+  message: error.message,
+});
     } else if (data) {
       onOpenMap(data);
     }
@@ -295,29 +301,35 @@ const loadMindmaps = async () => {
     setCreating(false);
   };
 
-  const deleteMindMap = async (id) => {
-    const ok = window.confirm(
-      "确定要删除这个思维导图吗？删除后无法恢复。"
-    );
+ const deleteMindMap = async (id) => {
+  setDialog({
+    type: "confirm",
+    title: "删除思维导图",
+    message: "确定要删除这个思维导图吗？删除后无法恢复。",
+    onConfirm: async () => {
+      setDialog(null);
 
-    if (!ok) return;
+      const { error } = await supabase
+        .from("mindmaps")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", session.user.id);
 
-    const { error } = await supabase
-      .from("mindmaps")
-      .delete()
-      .eq("id", id)
-      .eq("user_id", session.user.id);
+      if (error) {
+        setDialog({
+          type: "message",
+          title: "删除失败",
+          message: error.message,
+        });
+        return;
+      }
 
-    if (error) {
-      alert("删除失败：" + error.message);
-      return;
-    }
-
-    setMindmaps((maps) =>
-      maps.filter((map) => map.id !== id)
-    );
-  };
-
+      setMindmaps((maps) =>
+        maps.filter((map) => map.id !== id)
+      );
+    },
+  });
+};
   const toggleFavorite = async (map) => {
     const nextValue = !map.is_favorite;
 
@@ -331,7 +343,11 @@ const loadMindmaps = async () => {
       .eq("user_id", session.user.id);
 
     if (error) {
-      alert("操作失败：" + error.message);
+     setDialog({
+  type: "message",
+  title: "操作失败",
+  message: error.message,
+});
       return;
     }
 
@@ -373,7 +389,86 @@ const loadMindmaps = async () => {
           <span className="logo-icon">Y</span>
           <span>YHMind</span>
         </div>
+{dialog && (
+  <div className="app-dialog-overlay">
+    <div
+      className="app-dialog"
+      onClick={(event) =>
+        event.stopPropagation()
+      }
+    >
+      <div className="app-dialog-header">
+        <h3>{dialog.title}</h3>
 
+        <button
+          onClick={() => setDialog(null)}
+        >
+          ×
+        </button>
+      </div>
+
+      <div className="app-dialog-body">
+        {dialog.type === "input" ? (
+          <input
+            className="app-dialog-input"
+            autoFocus
+            value={dialog.value || ""}
+            placeholder={dialog.placeholder || ""}
+            onChange={(event) =>
+              setDialog((current) => ({
+                ...current,
+                value: event.target.value,
+              }))
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+
+                if (dialog.onConfirm) {
+                  dialog.onConfirm(
+                    dialog.value || ""
+                  );
+                }
+              }
+
+              if (event.key === "Escape") {
+                setDialog(null);
+              }
+            }}
+          />
+        ) : (
+          <div>{dialog.message}</div>
+        )}
+      </div>
+
+      <div className="app-dialog-actions">
+        {dialog.type === "confirm" && (
+          <button
+            className="app-dialog-cancel"
+            onClick={() => setDialog(null)}
+          >
+            取消
+          </button>
+        )}
+
+        <button
+          className="app-dialog-confirm"
+          onClick={() => {
+            if (dialog.onConfirm) {
+              dialog.onConfirm(
+                dialog.value || ""
+              );
+            } else {
+              setDialog(null);
+            }
+          }}
+        >
+          确定
+        </button>
+      </div>
+    </div>
+  </div>
+)}
         <div className="dashboard-user">
           <span className="user-email">
             {session.user.email}
@@ -468,9 +563,10 @@ const loadMindmaps = async () => {
                 key={map.id}
                 onClick={() => onOpenMap(map)}
               >
-                <div className="mindmap-preview">
-                  <span>🧠</span>
-                </div>
+                <MindMapThumbnail
+  nodes={map.nodes}
+  edges={map.edges}
+/>
 
                 <div className="mindmap-card-body">
                   <div className="mindmap-card-title-row">
@@ -531,6 +627,8 @@ function MindMapEditor({ session, mindmap, onBack }) {
   const isOwner =
   mindmap.user_id === session.user.id;
 
+const [dialog, setDialog] = useState(null);
+
 const canEdit =
   isOwner || mindmap.role === "editor";
   const loadShares = async () => {
@@ -554,12 +652,20 @@ const addShare = async () => {
   const email = shareEmail.trim().toLowerCase();
 
   if (!email) {
-    alert("请输入对方邮箱");
+    setDialog({
+  type: "message",
+  title: "无法分享",
+  message: "请输入对方邮箱。",
+});
     return;
   }
 
   if (email === session.user.email.toLowerCase()) {
-    alert("不能分享给自己");
+    setDialog({
+  type: "message",
+  title: "无法分享",
+  message: "不能分享给自己。",
+});
     return;
   }
 
@@ -575,7 +681,11 @@ const addShare = async () => {
     });
 
   if (error) {
-    alert("分享失败：" + error.message);
+    setDialog({
+  type: "message",
+  title: "分享失败",
+  message: error.message,
+});
   } else {
     setShareEmail("");
     await loadShares();
@@ -592,7 +702,11 @@ const removeShare = async (shareId) => {
     .eq("owner_id", session.user.id);
 
   if (error) {
-    alert("取消分享失败：" + error.message);
+    setDialog({
+  type: "message",
+  title: "取消分享失败",
+  message: error.message,
+});
     return;
   }
 
@@ -783,6 +897,12 @@ const redo = () => {
 useEffect(() => {
   if (loading || !canEdit) return;
 
+console.log("自动保存触发", {
+  loading,
+  canEdit,
+  mindmapId: mindmap.id,
+});
+
   const snapshot = JSON.stringify({
     nodes,
     edges,
@@ -818,43 +938,47 @@ useEffect(() => {
 useEffect(() => {
   if (loading || !canEdit) return;
 
-    const timer = setTimeout(async () => {
-      setSaving(true);
+  const timer = setTimeout(async () => {
+    setSaving(true);
 
-      const nodesToSave = nodes.map((node) => ({
-  ...node,
-  data: {
-    ...node.data,
-    imageUrl: undefined,
-  },
-}));
+    const nodesToSave = nodes.map((node) => ({
+      ...node,
+      data: {
+        ...node.data,
+        imageUrl: undefined,
+      },
+    }));
 
-const { error } = await supabase
-  .from("mindmaps")
-  .update({
-    nodes: nodesToSave,
-    edges,
-    updated_at: new Date().toISOString(),
-  })
-  .eq("id", mindmap.id);
- 
+    const { data, error } = await supabase
+      .from("mindmaps")
+      .update({
+        nodes: nodesToSave,
+        edges,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", mindmap.id)
+      .select("id")
+      .single();
 
-      if (error) {
-        console.error(error);
-      }
+    if (error) {
+      console.error("保存失败:", error);
+    } else {
+      console.log("保存成功:", data);
+    }
 
-      setSaving(false);
-    }, 700);
+    setSaving(false);
+  }, 700);
 
-    return () => clearTimeout(timer);
-  }, [
-    nodes,
-    edges,
-    loading,
-    mindmap.id,
-    session.user.id,
-    canEdit,
-  ]);
+  return () => clearTimeout(timer);
+}, [
+  nodes,
+  edges,
+  loading,
+  mindmap.id,
+  session.user.id,
+  canEdit,
+]);
+
 const autoArrange = () => {
   if (!canEdit) return;
   if (!nodes.length) return;
@@ -1112,7 +1236,11 @@ const deleteNodeById = (nodeId) => {
   if (!canEdit) return;
 
   if (!nodeId || nodeId === "root") {
-    alert("中心节点不能删除");
+   setDialog({
+  type: "message",
+  title: "无法删除",
+  message: "中心节点不能删除。",
+});
     return;
   }
 
@@ -1145,7 +1273,11 @@ const deleteSelectedNodes = () => {
   );
 
   if (nodesToDelete.length === 0) {
-    alert("中心节点不能删除");
+   setDialog({
+  type: "message",
+  title: "无法删除",
+  message: "中心节点不能删除。",
+});
     return;
   }
 
@@ -1168,82 +1300,100 @@ const deleteSelectedNodes = () => {
   setContextMenu(null);
 };
 
-  const changeEmoji = (nodeId) => {
+ const changeEmoji = (nodeId) => {
   if (!canEdit) return;
 
   const node = nodes.find(
-      (item) => item.id === nodeId
-    );
+    (item) => item.id === nodeId
+  );
 
-    if (!node) return;
+  if (!node) return;
 
-    const emoji = window.prompt(
-      "输入 Emoji",
-      node.data.emoji || "✨"
-    );
+  setDialog({
+    type: "input",
+    title: "修改 Emoji",
+    value: node.data.emoji || "",
+    placeholder: "输入 Emoji",
+    onConfirm: (emoji) => {
+      setDialog(null);
 
-    if (emoji === null) return;
+      if (!emoji.trim()) return;
 
-    setNodes((nds) =>
-      nds.map((item) =>
-        item.id === nodeId
-          ? {
-              ...item,
-              data: {
-                ...item.data,
-                emoji,
-              },
-            }
-          : item
-      )
-    );
+      setNodes((nds) =>
+        nds.map((item) =>
+          item.id === nodeId
+            ? {
+                ...item,
+                data: {
+                  ...item.data,
+                  emoji: emoji.trim(),
+                },
+              }
+            : item
+        )
+      );
 
-    setContextMenu(null);
-  };
+      setContextMenu(null);
+    },
+  });
+};
 
   const changeColor = (nodeId) => {
   if (!canEdit) return;
 
   const node = nodes.find(
-      (item) => item.id === nodeId
-    );
+    (item) => item.id === nodeId
+  );
 
-    if (!node) return;
+  if (!node) return;
 
-    const color = window.prompt(
-      "请输入颜色，例如 #FFE4E1",
-      node.data.color || "#ffffff"
-    );
+  setDialog({
+    type: "input",
+    title: "修改节点颜色",
+    value: node.data.color || "#ffffff",
+    placeholder: "#FFE4E1",
+    onConfirm: (color) => {
+      setDialog(null);
 
-    if (!color) return;
+      if (!color.trim()) return;
 
-    setNodes((nds) =>
-      nds.map((item) =>
-        item.id === nodeId
-          ? {
-              ...item,
-              data: {
-                ...item.data,
-                color,
-              },
-            }
-          : item
-      )
-    );
+      setNodes((nds) =>
+        nds.map((item) =>
+          item.id === nodeId
+            ? {
+                ...item,
+                data: {
+                  ...item.data,
+                  color: color.trim(),
+                },
+              }
+            : item
+        )
+      );
 
-    setContextMenu(null);
-  };
+      setContextMenu(null);
+    },
+  });
+};
 const uploadImage = async (nodeId, file) => {
   if (!canEdit) return;
   if (!file) return;
 
   if (!file.type.startsWith("image/")) {
-    alert("请选择图片文件");
+    setDialog({
+  type: "message",
+  title: "无法添加图片",
+  message: "请选择图片文件。",
+});
     return;
   }
 
   if (file.size > 5 * 1024 * 1024) {
-    alert("图片不能超过 5MB");
+  setDialog({
+  type: "message",
+  title: "图片过大",
+  message: "图片不能超过 5MB。",
+});
     return;
   }
 
@@ -1306,10 +1456,11 @@ const uploadImage = async (nodeId, file) => {
   } catch (error) {
     console.error(error);
 
-    alert(
-      "图片上传失败：" +
-        (error.message || "未知错误")
-    );
+    setDialog({
+  type: "message",
+  title: "图片上传失败",
+  message: error.message || "未知错误",
+});
   } finally {
     setSaving(false);
   }
@@ -1457,35 +1608,44 @@ if (event.ctrlKey && event.key.toLowerCase() === "z") {
      标题
   ========================= */
 
-  const renameMap = async () => {
-    if (!isOwner) return;
+const renameMap = async () => {
+  if (!isOwner) return;
 
-    const newTitle = window.prompt(
-      "请输入思维导图名称",
-      mindmap.title
-    );
+  setDialog({
+    type: "input",
+    title: "重命名思维导图",
+    value: mindmap.title,
+    placeholder: "请输入思维导图名称",
+    onConfirm: async (newTitle) => {
+      if (!newTitle || !newTitle.trim()) {
+        setDialog(null);
+        return;
+      }
 
-    if (!newTitle || !newTitle.trim()) {
-      return;
-    }
+      setDialog(null);
 
-    const { error } = await supabase
-      .from("mindmaps")
-      .update({
-        title: newTitle.trim(),
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", mindmap.id)
-      .eq("user_id", session.user.id);
+      const { error } = await supabase
+        .from("mindmaps")
+        .update({
+          title: newTitle.trim(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", mindmap.id)
+        .eq("user_id", session.user.id);
 
-    if (error) {
-      alert("修改失败：" + error.message);
-      return;
-    }
+      if (error) {
+        setDialog({
+          type: "message",
+          title: "修改失败",
+          message: error.message,
+        });
+        return;
+      }
 
-    mindmap.title = newTitle.trim();
-  };
-
+      mindmap.title = newTitle.trim();
+    },
+  });
+};
   const logout = async () => {
     await supabase.auth.signOut();
   };
@@ -1561,8 +1721,12 @@ return (
             className="tool-button primary"
             onClick={() => {
               if (!selectedNode) {
-                alert("请先选择一个节点");
-                return;
+  setDialog({
+    type: "message",
+    title: "无法添加图片",
+    message: "请先选择一个节点。",
+  });
+  return;
               }
 
               createChildNode(selectedNode);
@@ -1643,7 +1807,11 @@ return (
   className="tool-button"
   onClick={() => {
     if (!selectedNode) {
-      alert("请先选择一个节点");
+     setDialog({
+  type: "message",
+  title: "无法添加节点",
+  message: "请先选择一个节点。",
+});
       return;
     }
 
@@ -1935,8 +2103,90 @@ onNodesChange={onNodesChange}
                 ⌫ 删除节点
               </button>
             </div>
+            
           )}
         </main>
+        
+{dialog && (
+  <div className="app-dialog-overlay">
+    <div
+      className="app-dialog"
+      onClick={(event) =>
+        event.stopPropagation()
+      }
+    >
+      <div className="app-dialog-header">
+        <h3>{dialog.title}</h3>
+
+        <button
+          onClick={() => setDialog(null)}
+        >
+          ×
+        </button>
+      </div>
+
+      <div className="app-dialog-body">
+        {dialog.type === "input" ? (
+          <input
+            className="app-dialog-input"
+            autoFocus
+            value={dialog.value || ""}
+            placeholder={dialog.placeholder || ""}
+            onChange={(event) =>
+              setDialog((current) => ({
+                ...current,
+                value: event.target.value,
+              }))
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+
+                if (dialog.onConfirm) {
+                  dialog.onConfirm(
+                    dialog.value || ""
+                  );
+                }
+              }
+
+              if (event.key === "Escape") {
+                setDialog(null);
+              }
+            }}
+          />
+        ) : (
+          <div>{dialog.message}</div>
+        )}
+      </div>
+
+      <div className="app-dialog-actions">
+        {dialog.type === "confirm" && (
+          <button
+            className="app-dialog-cancel"
+            onClick={() => setDialog(null)}
+          >
+            取消
+          </button>
+        )}
+
+        <button
+          className="app-dialog-confirm"
+          onClick={() => {
+            if (dialog.onConfirm) {
+              dialog.onConfirm(
+                dialog.value || ""
+              );
+            } else {
+              setDialog(null);
+            }
+          }}
+        >
+          确定
+        </button>
+      </div>
+    </div>
+  </div>
+)}
       </div>
     </div>
   );

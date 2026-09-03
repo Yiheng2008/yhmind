@@ -221,3 +221,89 @@ code {
   color: #999;
   font-size: 13px;
 }
+
+.mindmap-thumbnail {
+  width: 100%;
+  height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #f7f7f7;
+}
+
+.mindmap-thumbnail svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.mindmap-thumbnail-empty {
+  width: 100%;
+  height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  background: #f7f7f7;
+}
+
+.app-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.app-dialog {
+  width: 360px;
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.app-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+}
+
+.app-dialog-header h3 {
+  margin: 0;
+  color: #111111;
+  font-size: 18px;
+}
+
+.app-dialog-header button {
+  border: 0;
+  background: transparent;
+  font-size: 22px;
+  cursor: pointer;
+  color: #666666;
+}
+
+.app-dialog-body {
+  padding: 0 20px 20px;
+  color: #444444;
+  line-height: 1.6;
+}
+
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 20px 20px;
+}
+
+.app-dialog-actions button {
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 18px;
+  background: #6c63ff;
+  color: #ffffff;
+  cursor: pointer;
+}
