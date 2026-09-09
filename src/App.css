@@ -390,7 +390,7 @@ button {
 
 .dashboard-heading p {
   margin: 0;
-  color: #888;
+  color: #000000;
 }
 
 .create-map-button {
@@ -761,4 +761,11 @@ button {
 }
 .back-button {
   color: #000000 !important;
+}
+.dashboard-heading p {
+  color: #888888;
+}
+
+.dashboard-heading h1 {
+  color: #222222;
 }

@@ -14,6 +14,8 @@ import {
   Handle,
   Position,
   addEdge,
+  applyNodeChanges,
+  applyEdgeChanges,
   useNodesState,
   useEdgesState,
 } from "@xyflow/react";
@@ -21,6 +23,7 @@ import { createClient } from "@supabase/supabase-js";
 
 import "@xyflow/react/dist/style.css";
 import "./App.css";
+import "./collaboration.css";
 
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -75,12 +78,53 @@ const defaultNodes = [
     position: { x: 450, y: 280 },
     data: {
   label: "我的思维导图",
-  color: "#E8E0FF",
+  color: "#000000",
    },
   },
 ];
 
 const defaultEdges = [];
+
+function getDisplayName(user) {
+  return (
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split("@")[0] ||
+    "用户"
+  );
+}
+
+function getAvatarUrl(user) {
+  return (
+    user?.user_metadata?.avatar_url ||
+    user?.user_metadata?.picture ||
+    null
+  );
+}
+
+function getAvatarInitial(name) {
+  return (name || "U").trim().charAt(0).toUpperCase();
+}
+
+function getUserColor(userId = "") {
+  let hash = 0;
+
+  for (let i = 0; i < userId.length; i += 1) {
+    hash = (hash * 31 + userId.charCodeAt(i)) | 0;
+  }
+
+  const colors = [
+    "#6C63FF",
+    "#4F8CFF",
+    "#35A67A",
+    "#E38B5B",
+    "#D66BA0",
+    "#7B61A8",
+  ];
+
+  return colors[Math.abs(hash) % colors.length];
+}
+
 const COLOR_PRESETS = [
   "#F4CCCC",
   "#FCE5CD",
@@ -209,126 +253,27 @@ function arrangeMindMap(nodes, edges, selectedIds) {
     }
   });
 
-  const newPositions = {
+  const positions = {
     [root.id]: {
       x: root.position.x,
       y: root.position.y,
     },
   };
 
-  /*
-    距离参数
-
-    DEPTH_GAP：
-    父节点到子节点的距离
-
-    SIBLING_GAP：
-    同级节点之间的距离
-  */
-
-  const DEPTH_GAP = 260;
-  const SIBLING_GAP = 95;
-
-  /*
-    返回某个子树在“横向/纵向宽度”上
-    大概需要占多少个单位。
-
-    和之前不同：
-    不再把所有叶子数量直接加起来。
-
-    我们只关心每一层最多有多少节点，
-    这样链很长的时候不会把整张图撑爆。
-  */
-
-  const profileMemo = new Map();
-
-  const getProfile = (nodeId) => {
-    if (profileMemo.has(nodeId)) {
-      return profileMemo.get(nodeId);
-    }
-
-    const profile = [1];
-
-    const children = (
-      childrenMap[nodeId] || []
-    ).filter((childId) =>
-      selectedSet.has(childId)
-    );
-
-    children.forEach((childId) => {
-      const childProfile =
-        getProfile(childId);
-
-      childProfile.forEach(
-        (count, depth) => {
-          const targetDepth =
-            depth + 1;
-
-          profile[targetDepth] =
-            (profile[targetDepth] || 0) +
-            count;
-        }
-      );
-    });
-
-    profileMemo.set(nodeId, profile);
-
-    return profile;
-  };
-
-  const getBreadth = (nodeId) => {
-    const profile = getProfile(nodeId);
-
-    return Math.max(...profile, 1);
-  };
-
-  /*
-    得到当前节点选中的直接子节点
-  */
+  const DEPTH_GAP = 250;
+  const SIBLING_GAP = 105;
 
   const getSelectedChildren = (nodeId) =>
     (childrenMap[nodeId] || []).filter(
-      (childId) =>
-        selectedSet.has(childId)
+      (childId) => selectedSet.has(childId)
     );
 
-  /*
-    把一个分支沿指定方向展开。
-
-    direction = 主分支前进方向
-
-    例如：
-
-    右边：
-    direction = 0
-
-    上边：
-    direction = -90°
-
-    下边：
-    direction = 90°
-
-    左边：
-    direction = 180°
-  */
-
-  const placeChildren = (
+  const placeBranch = (
     parentPosition,
     direction,
     children
   ) => {
-    if (!children.length) {
-      return;
-    }
-
-    /*
-      与主方向垂直的方向。
-
-      右 → 上下分开
-      上 → 左右分开
-      左 → 上下分开
-      下 → 左右分开
-    */
+    if (!children.length) return;
 
     const perpendicular = {
       x: -Math.sin(direction),
@@ -336,163 +281,90 @@ function arrangeMindMap(nodes, edges, selectedIds) {
     };
 
     /*
-      保留用户原本的兄弟节点顺序。
+      保留兄弟节点原有的相对顺序，
+      只把它们重新拉成规则间距。
     */
+    const orderedChildren = [...children].sort(
+      (a, b) => {
+        const nodeA = nodeMap[a];
+        const nodeB = nodeMap[b];
 
-    const orderedChildren = [
-      ...children,
-    ].sort((a, b) => {
-      const nodeA = nodeMap[a];
-      const nodeB = nodeMap[b];
+        const offsetA =
+          (nodeA.position.x - parentPosition.x) *
+            perpendicular.x +
+          (nodeA.position.y - parentPosition.y) *
+            perpendicular.y;
 
-      const offsetA =
-        (nodeA.position.x -
-          parentPosition.x) *
-          perpendicular.x +
-        (nodeA.position.y -
-          parentPosition.y) *
-          perpendicular.y;
+        const offsetB =
+          (nodeB.position.x - parentPosition.x) *
+            perpendicular.x +
+          (nodeB.position.y - parentPosition.y) *
+            perpendicular.y;
 
-      const offsetB =
-        (nodeB.position.x -
-          parentPosition.x) *
-          perpendicular.x +
-        (nodeB.position.y -
-          parentPosition.y) *
-          perpendicular.y;
-
-      return offsetA - offsetB;
-    });
-
-    /*
-      计算每个子树需要占用的空间。
-
-      这里只取“这一整棵子树某一层最大宽度”，
-      不再把所有叶子无限累加。
-    */
-
-    const widths = orderedChildren.map(
-      (childId) =>
-        Math.max(
-          getBreadth(childId),
-          1
-        )
+        return offsetA - offsetB;
+      }
     );
 
-    const totalWidth =
-      widths.reduce(
-        (sum, value) =>
-          sum + value,
-        0
-      );
-
-    let cursor =
-      -((totalWidth - 1) *
-        SIBLING_GAP) /
-      2;
+    const center =
+      (orderedChildren.length - 1) / 2;
 
     orderedChildren.forEach(
       (childId, index) => {
-        const width =
-          widths[index];
-
-        /*
-          当前子树自己的中心位置。
-        */
-
-        const localOffset =
-          cursor +
-          ((width - 1) *
-            SIBLING_GAP) /
-            2;
+        const offset =
+          (index - center) * SIBLING_GAP;
 
         const childPosition = {
           x:
             parentPosition.x +
-            Math.cos(direction) *
-              DEPTH_GAP +
-            perpendicular.x *
-              localOffset,
+            Math.cos(direction) * DEPTH_GAP +
+            perpendicular.x * offset,
 
           y:
             parentPosition.y +
-            Math.sin(direction) *
-              DEPTH_GAP +
-            perpendicular.y *
-              localOffset,
+            Math.sin(direction) * DEPTH_GAP +
+            perpendicular.y * offset,
         };
 
-        newPositions[childId] =
-          childPosition;
+        positions[childId] = childPosition;
 
-        /*
-          子节点继续沿完全相同的方向展开。
-        */
-
-        const grandchildren =
-          getSelectedChildren(
-            childId
-          );
-
-        placeChildren(
+        placeBranch(
           childPosition,
           direction,
-          grandchildren
+          getSelectedChildren(childId)
         );
-
-        cursor +=
-          width *
-          SIBLING_GAP;
       }
     );
   };
 
   /*
-    判断是否是“全图排列”。
-
-    root 不需要选中，
-    它永远是固定中心。
+    整张图：
+    第一层严格均分 360°。
   */
-
-  const wholeMapSelected =
-    nodes.every(
-      (node) =>
-        node.id === "root" ||
-        selectedSet.has(node.id)
-    );
-
-  /*
-    =====================================
-    情况 1：整个导图排列
-    =====================================
-  */
+  const wholeMapSelected = nodes.every(
+    (node) =>
+      node.id === "root" ||
+      selectedSet.has(node.id)
+  );
 
   if (wholeMapSelected) {
     const rootChildren =
       childrenMap[root.id] || [];
 
-    if (
-      rootChildren.length === 0
-    ) {
-      return newPositions;
+    if (!rootChildren.length) {
+      return positions;
     }
-
-    /*
-      一级节点严格均分 360°。
-
-      2 → 180°
-      3 → 120°
-      4 → 90°
-      5 → 72°
-      ...
-
-      0° 从右侧开始。
-    */
 
     const angleStep =
       (Math.PI * 2) /
       rootChildren.length;
 
+    /*
+      让第一个分支从正右方开始：
+
+      2 → 右 / 左
+      3 → 右 / 左下 / 左上
+      4 → 右 / 下 / 左 / 上
+    */
     rootChildren.forEach(
       (childId, index) => {
         const direction =
@@ -501,67 +373,38 @@ function arrangeMindMap(nodes, edges, selectedIds) {
         const childPosition = {
           x:
             root.position.x +
-            Math.cos(direction) *
-              DEPTH_GAP,
+            Math.cos(direction) * DEPTH_GAP,
 
           y:
             root.position.y +
-            Math.sin(direction) *
-              DEPTH_GAP,
+            Math.sin(direction) * DEPTH_GAP,
         };
 
-        newPositions[childId] =
-          childPosition;
+        positions[childId] = childPosition;
 
-        /*
-          这一整条分支都沿自己的
-          一级节点方向继续展开。
-        */
-
-        const grandchildren =
-          getSelectedChildren(
-            childId
-          );
-
-        placeChildren(
+        placeBranch(
           childPosition,
           direction,
-          grandchildren
+          getSelectedChildren(childId)
         );
       }
     );
 
-    /*
-      中心节点绝对不移动。
-    */
-
-    newPositions[root.id] = {
+    positions[root.id] = {
       x: root.position.x,
       y: root.position.y,
     };
 
-    return newPositions;
+    return positions;
   }
 
   /*
-    =====================================
-    情况 2：局部排列
-    =====================================
-
-    例如：
-
-          C
-          |
-    A ——— B ——— D
-
-    只选 C / D
-
-    B 作为锚点，
-    B 完全不动。
+    局部排列：
+    找到选中区域最顶层节点。
+    它的父节点是锚点，锚点不移动。
   */
-
-  const topSelectedNodes =
-    nodes.filter((node) => {
+  const localRoots = nodes.filter(
+    (node) => {
       if (
         node.id === "root" ||
         !selectedSet.has(node.id)
@@ -571,196 +414,129 @@ function arrangeMindMap(nodes, edges, selectedIds) {
 
       const parentEdge =
         edges.find(
-          (edge) =>
-            edge.target === node.id
+          (edge) => edge.target === node.id
         );
 
       if (!parentEdge) {
         return false;
       }
 
-      const parentId =
-        parentEdge.source;
-
-      /*
-        如果父节点没选中，
-        当前节点就是这个局部区域的根。
-      */
-
       return !selectedSet.has(
-        parentId
-      );
-    });
-
-  /*
-    按锚点分组。
-  */
-
-  const anchorGroups = {};
-
-  topSelectedNodes.forEach(
-    (node) => {
-      const parentEdge =
-        edges.find(
-          (edge) =>
-            edge.target === node.id
-        );
-
-      if (!parentEdge) {
-        return;
-      }
-
-      const anchorId =
-        parentEdge.source;
-
-      if (!anchorGroups[anchorId]) {
-        anchorGroups[anchorId] =
-          [];
-      }
-
-      anchorGroups[anchorId].push(
-        node.id
+        parentEdge.source
       );
     }
   );
 
-  Object.entries(
-    anchorGroups
-  ).forEach(
+  const groups = {};
+
+  localRoots.forEach((node) => {
+    const parentEdge =
+      edges.find(
+        (edge) => edge.target === node.id
+      );
+
+    if (!parentEdge) return;
+
+    const anchorId =
+      parentEdge.source;
+
+    if (!groups[anchorId]) {
+      groups[anchorId] = [];
+    }
+
+    groups[anchorId].push(node.id);
+  });
+
+  Object.entries(groups).forEach(
     ([anchorId, childIds]) => {
       const anchor =
         nodeMap[anchorId];
 
-      if (!anchor) {
-        return;
-      }
+      if (!anchor) return;
 
       /*
-        root 下只选择了一部分节点时，
-        保留它们原来的方向。
-
-        例如：
-        一个在右边，
-        一个在上边，
-
-        不会被平均成右上角。
+        root 下选择了多个一级分支：
+        每个分支保持原来的方向。
       */
+      if (anchorId === root.id) {
+        childIds.forEach((childId) => {
+          const child =
+            nodeMap[childId];
 
-      if (
-        anchorId === root.id &&
-        childIds.length > 1
-      ) {
-        childIds.forEach(
-          (childId) => {
-            const node =
-              nodeMap[childId];
+          let dx =
+            child.position.x -
+            root.position.x;
 
-            let dx =
-              node.position.x -
-              anchor.position.x;
+          let dy =
+            child.position.y -
+            root.position.y;
 
-            let dy =
-              node.position.y -
-              anchor.position.y;
-
-            if (
-              Math.abs(dx) <
-                0.001 &&
-              Math.abs(dy) <
-                0.001
-            ) {
-              dx = 1;
-              dy = 0;
-            }
-
-            const direction =
-              Math.atan2(
-                dy,
-                dx
-              );
-
-            const childPosition = {
-              x:
-                anchor.position.x +
-                Math.cos(
-                  direction
-                ) *
-                  DEPTH_GAP,
-
-              y:
-                anchor.position.y +
-                Math.sin(
-                  direction
-                ) *
-                  DEPTH_GAP,
-            };
-
-            newPositions[
-              childId
-            ] = childPosition;
-
-            const grandchildren =
-              getSelectedChildren(
-                childId
-              );
-
-            placeChildren(
-              childPosition,
-              direction,
-              grandchildren
-            );
+          if (
+            Math.abs(dx) < 0.001 &&
+            Math.abs(dy) < 0.001
+          ) {
+            dx = 1;
+            dy = 0;
           }
-        );
+
+          const direction =
+            Math.atan2(dy, dx);
+
+          const childPosition = {
+            x:
+              root.position.x +
+              Math.cos(direction) * DEPTH_GAP,
+
+            y:
+              root.position.y +
+              Math.sin(direction) * DEPTH_GAP,
+          };
+
+          positions[childId] =
+            childPosition;
+
+          placeBranch(
+            childPosition,
+            direction,
+            getSelectedChildren(childId)
+          );
+        });
 
         return;
       }
 
       /*
-        一般情况：
-        根据原来的位置判断这个分支
-        朝哪个方向展开。
+        普通局部区域：
+        所有选中的顶层节点沿平均方向规则展开。
       */
-
       let dx = 0;
       let dy = 0;
 
-      childIds.forEach(
-        (childId) => {
-          const node =
-            nodeMap[childId];
+      childIds.forEach((childId) => {
+        const child =
+          nodeMap[childId];
 
-          dx +=
-            node.position.x -
-            anchor.position.x;
-
-          dy +=
-            node.position.y -
-            anchor.position.y;
-        }
-      );
-
-      if (
-        Math.abs(dx) <
-          0.001 &&
-        Math.abs(dy) <
-          0.001
-      ) {
-        const firstNode =
-          nodeMap[childIds[0]];
-
-        dx =
-          firstNode.position.x -
+        dx +=
+          child.position.x -
           anchor.position.x;
 
-        dy =
-          firstNode.position.y -
+        dy +=
+          child.position.y -
           anchor.position.y;
+      });
+
+      if (
+        Math.abs(dx) < 0.001 &&
+        Math.abs(dy) < 0.001
+      ) {
+        dx = 1;
+        dy = 0;
       }
 
       const direction =
         Math.atan2(dy, dx);
 
-      placeChildren(
+      placeBranch(
         {
           x: anchor.position.x,
           y: anchor.position.y,
@@ -771,16 +547,12 @@ function arrangeMindMap(nodes, edges, selectedIds) {
     }
   );
 
-  /*
-    root 永远不动。
-  */
-
-  newPositions[root.id] = {
+  positions[root.id] = {
     x: root.position.x,
     y: root.position.y,
   };
 
-  return newPositions;
+  return positions;
 }
 /* =========================
    登录 / 注册
@@ -1419,7 +1191,13 @@ const removeShare = async (shareId) => {
 
   const [edges, setEdges, onEdgesChange] =
     useEdgesState([]);
+useEffect(() => {
+  nodesRef.current = nodes;
+}, [nodes]);
 
+useEffect(() => {
+  edgesRef.current = edges;
+}, [edges]);
   const [selectedNode, setSelectedNode] = useState(null);
 const [selectedNodes, setSelectedNodes] = useState([]);
   const [editingNode, setEditingNode] = useState(null);
@@ -1435,10 +1213,33 @@ const fileInputRef = useRef(null);
 const [imageTargetNode, setImageTargetNode] =
   useState(null);
   const [saving, setSaving] = useState(false);
-const [loading, setLoading] = useState(true);
-const [isArranging, setIsArranging] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [isArranging, setIsArranging] = useState(false);
 
-const arrangeTimerRef = useRef(null);
+  const [collaborators, setCollaborators] = useState([]);
+  const [remoteCursors, setRemoteCursors] = useState({});
+  const [collabConnected, setCollabConnected] = useState(false);
+
+  const nodesRef = useRef([]);
+  const edgesRef = useRef([]);
+  const applyingRemoteRef = useRef(false);
+
+  const editChannelRef = useRef(null);
+  const cursorChannelRef = useRef(null);
+
+  const positionBroadcastRef = useRef(new Map());
+  const positionBroadcastTimerRef = useRef(null);
+
+  const canvasRef = useRef(null);
+
+  const cursorFrameRef = useRef(null);
+  const pendingCursorRef = useRef(null);
+  const arrangeTimerRef = useRef(null);
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+    edgesRef.current = edges;
+  }, [nodes, edges]);
 
   useEffect(() => {
   const loadMindMap = async () => {
@@ -1682,6 +1483,27 @@ useEffect(() => {
   canEdit,
 ]);
 
+const broadcastEdit = useCallback((event, payload) => {
+  if (applyingRemoteRef.current) return;
+
+  const channel = editChannelRef.current;
+
+  if (!channel) return;
+
+  channel
+    .send({
+      type: "broadcast",
+      event,
+      payload: {
+        ...payload,
+        senderId: session.user.id,
+      },
+    })
+    .catch((error) => {
+      console.error("实时同步发送失败:", error);
+    });
+}, [session.user.id]);
+
 const autoArrange = () => {
   if (!canEdit) return;
 
@@ -1695,17 +1517,13 @@ const autoArrange = () => {
     return;
   }
 
-  const newPositions =
-    arrangeMindMap(
-      nodes,
-      edges,
-      selectedNodes
-    );
+  const newPositions = arrangeMindMap(
+    nodes,
+    edges,
+    selectedNodes
+  );
 
-  if (
-    Object.keys(newPositions)
-      .length === 0
-  ) {
+  if (Object.keys(newPositions).length === 0) {
     return;
   }
 
@@ -1713,8 +1531,7 @@ const autoArrange = () => {
 
   setNodes((nds) =>
     nds.map((node) => {
-      const position =
-        newPositions[node.id];
+      const position = newPositions[node.id];
 
       if (!position) {
         return node;
@@ -1723,17 +1540,10 @@ const autoArrange = () => {
       return {
         ...node,
         position,
-        className:
-          "mind-node-arranging",
+        className: "mind-node-arranging",
       };
     })
   );
-
-  /*
-    排列后的线直接使用直线。
-    对于上下左右的径向结构，
-    会比 smoothstep 干净很多。
-  */
 
   setEdges((eds) =>
     eds.map((edge) => ({
@@ -1742,38 +1552,42 @@ const autoArrange = () => {
     }))
   );
 
-  clearTimeout(
-    arrangeTimerRef.current
-  );
+  broadcastEdit("arrange", {
+    positions: newPositions,
+    edgeType: "straight",
+  });
 
-  arrangeTimerRef.current =
-    setTimeout(() => {
-      setIsArranging(false);
+  clearTimeout(arrangeTimerRef.current);
 
-      setNodes((nds) =>
-        nds.map((node) => ({
-          ...node,
-          className: "",
-        }))
-      );
-    }, 450);
+  arrangeTimerRef.current = setTimeout(() => {
+    setIsArranging(false);
+
+    setNodes((nds) =>
+      nds.map((node) => ({
+        ...node,
+        className: "",
+      }))
+    );
+  }, 450);
 };
 
   const onConnect = useCallback(
-  (params) => {
-    if (!canEdit) return;
+    (params) => {
+      if (!canEdit) return;
 
-    setEdges((eds) =>
-        addEdge(
-          {
-            ...params,
-            type: "straight",
-          },
-          eds
-        )
-      );
+      const edge = {
+        ...params,
+        type: "straight",
+        id: params.id || `edge-${Date.now()}`,
+      };
+
+      setEdges((eds) => addEdge(edge, eds));
+
+      broadcastEdit("edge_add", {
+        edge,
+      });
     },
-    [setEdges, canEdit]
+    [setEdges, canEdit, broadcastEdit]
   );
 
   /* =========================
@@ -1815,15 +1629,22 @@ const autoArrange = () => {
 
     setNodes((nds) => [...nds, newNode]);
 
+    const newEdge = {
+      id: `edge-${parentId}-${newId}`,
+      source: parentId,
+      target: newId,
+      type: "straight",
+    };
+
     setEdges((eds) => [
       ...eds,
-      {
-        id: `edge-${parentId}-${newId}`,
-        source: parentId,
-        target: newId,
-        type: "smoothstep",
-      },
+      newEdge,
     ]);
+
+    broadcastEdit("node_add", {
+      node: newNode,
+      edge: newEdge,
+    });
 
     setSelectedNode(newId);
 
@@ -1888,15 +1709,22 @@ const autoArrange = () => {
 
     setNodes((nds) => [...nds, newNode]);
 
+    const newEdge = {
+      id: `edge-${parentId}-${newId}`,
+      source: parentId,
+      target: newId,
+      type: "straight",
+    };
+
     setEdges((eds) => [
       ...eds,
-      {
-        id: `edge-${parentId}-${newId}`,
-        source: parentId,
-        target: newId,
-        type: "smoothstep",
-      },
+      newEdge,
     ]);
+
+    broadcastEdit("node_add", {
+      node: newNode,
+      edge: newEdge,
+    });
 
     setSelectedNode(newId);
 
@@ -1936,6 +1764,15 @@ const autoArrange = () => {
             : node
         )
       );
+
+      broadcastEdit("node_patch", {
+        nodeId: editingNode,
+        patch: {
+          data: {
+            label: value,
+          },
+        },
+      });
     }
 
     setEditingNode(null);
@@ -1965,6 +1802,10 @@ const deleteNodeById = (nodeId) => {
         edge.target !== nodeId
     )
   );
+
+  broadcastEdit("nodes_delete", {
+    nodeIds: [nodeId],
+  });
 
   setSelectedNode(null);
   setSelectedNodes([]);
@@ -2005,6 +1846,10 @@ const deleteSelectedNodes = () => {
     )
   );
 
+  broadcastEdit("nodes_delete", {
+    nodeIds: nodesToDelete,
+  });
+
   setSelectedNode(null);
   setSelectedNodes([]);
   setContextMenu(null);
@@ -2042,6 +1887,15 @@ const deleteSelectedNodes = () => {
             : item
         )
       );
+
+      broadcastEdit("node_patch", {
+        nodeId,
+        patch: {
+          data: {
+            emoji: emoji.trim(),
+          },
+        },
+      });
 
       setContextMenu(null);
     },
@@ -2089,6 +1943,15 @@ const changeColor = (nodeId) => {
             : item
         )
       );
+
+      broadcastEdit("node_patch", {
+        nodeId,
+        patch: {
+          data: {
+            color,
+          },
+        },
+      });
 
       setContextMenu(null);
     },
@@ -2241,6 +2104,16 @@ const uploadImage = async (nodeId, file) => {
       )
     );
 
+    broadcastEdit("node_patch", {
+      nodeId,
+      patch: {
+        data: {
+          imagePath: filePath,
+        },
+        imageUrl: signedData?.signedUrl || null,
+      },
+    });
+
   } catch (error) {
     console.error(error);
 
@@ -2253,6 +2126,646 @@ const uploadImage = async (nodeId, file) => {
     setSaving(false);
   }
 };
+  const applyRemoteNodePatch = async (nodeId, patch, remoteImageUrl = null) => {
+    if (!patch && !remoteImageUrl) return;
+
+    let imageUrl = remoteImageUrl;
+
+    if (patch?.data?.imagePath && !imageUrl) {
+      const { data, error } = await supabase.storage
+        .from("mindmap-images")
+        .createSignedUrl(
+          patch.data.imagePath,
+          60 * 60 * 24
+        );
+
+      if (!error) {
+        imageUrl = data?.signedUrl || null;
+      }
+    }
+
+    setNodes((nds) =>
+      nds.map((node) => {
+        if (node.id !== nodeId) return node;
+
+        const nextData = patch?.data
+          ? { ...node.data, ...patch.data }
+          : node.data;
+
+        return {
+          ...node,
+          ...patch,
+          data: nextData,
+          imageUrl: undefined,
+          ...(imageUrl
+            ? {
+                data: {
+                  ...nextData,
+                  imageUrl,
+                },
+              }
+            : {}),
+        };
+      })
+    );
+  };
+
+  const applyRemoteOperation = async (event, payload) => {
+    if (!payload || payload.senderId === session.user.id) {
+      return;
+    }
+
+    applyingRemoteRef.current = true;
+
+    try {
+      if (event === "node_add") {
+        setNodes((nds) => {
+          if (nds.some((node) => node.id === payload.node.id)) {
+            return nds;
+          }
+
+          return [...nds, payload.node];
+        });
+
+        if (payload.edge) {
+          setEdges((eds) => {
+            if (eds.some((edge) => edge.id === payload.edge.id)) {
+              return eds;
+            }
+
+            return [...eds, payload.edge];
+          });
+        }
+      }
+
+      if (event === "edge_add" && payload.edge) {
+        setEdges((eds) => {
+          if (eds.some((edge) => edge.id === payload.edge.id)) {
+            return eds;
+          }
+
+          return [...eds, payload.edge];
+        });
+      }
+
+      if (event === "nodes_delete") {
+        const ids = payload.nodeIds || [];
+
+        setNodes((nds) =>
+          nds.filter((node) => !ids.includes(node.id))
+        );
+
+        setEdges((eds) =>
+          eds.filter(
+            (edge) =>
+              !ids.includes(edge.source) &&
+              !ids.includes(edge.target)
+          )
+        );
+      }
+
+      if (event === "node_patch") {
+        await applyRemoteNodePatch(
+          payload.nodeId,
+          payload.patch,
+          payload.imageUrl
+        );
+      }
+
+      if (event === "node_positions") {
+        const positions = payload.positions || {};
+
+        setNodes((nds) =>
+          nds.map((node) => {
+            const position = positions[node.id];
+
+            if (!position) return node;
+
+            return {
+              ...node,
+              position,
+            };
+          })
+        );
+      }
+
+      if (event === "arrange") {
+        const positions = payload.positions || {};
+
+        setIsArranging(true);
+
+        setNodes((nds) =>
+          nds.map((node) => {
+            const position = positions[node.id];
+
+            if (!position) return node;
+
+            return {
+              ...node,
+              position,
+              className: "mind-node-arranging",
+            };
+          })
+        );
+
+        if (payload.edgeType) {
+          setEdges((eds) =>
+            eds.map((edge) => ({
+              ...edge,
+              type: payload.edgeType,
+            }))
+          );
+        }
+
+        clearTimeout(arrangeTimerRef.current);
+
+        arrangeTimerRef.current = setTimeout(() => {
+          setIsArranging(false);
+
+          setNodes((nds) =>
+            nds.map((node) => ({
+              ...node,
+              className: "",
+            }))
+          );
+        }, 450);
+      }
+
+      if (event === "nodes_change") {
+        setNodes((nds) =>
+          applyNodeChanges(
+            payload.changes || [],
+            nds
+          )
+        );
+      }
+
+      if (event === "edges_change") {
+        setEdges((eds) =>
+          applyEdgeChanges(
+            payload.changes || [],
+            eds
+          )
+        );
+      }
+
+      if (event === "snapshot_request") {
+        if (!isOwner) return;
+
+        const snapshotNodes = nodesRef.current.map((node) => ({
+          ...node,
+          data: {
+            ...node.data,
+            imageUrl: undefined,
+          },
+        }));
+
+        editChannelRef.current?.send({
+          type: "broadcast",
+          event: "snapshot",
+          payload: {
+            senderId: session.user.id,
+            nodes: snapshotNodes,
+            edges: edgesRef.current,
+          },
+        });
+      }
+
+      if (event === "snapshot") {
+        if (!payload.nodes || !payload.edges) return;
+
+        setNodes(payload.nodes);
+        setEdges(payload.edges);
+      }
+    } finally {
+      queueMicrotask(() => {
+        applyingRemoteRef.current = false;
+      });
+    }
+  };
+
+  const handleNodesChange = useCallback(
+    (changes) => {
+      onNodesChange(changes);
+
+      if (applyingRemoteRef.current || !canEdit) {
+        return;
+      }
+
+      const positionChanges = changes.filter(
+        (change) =>
+          change.type === "position" &&
+          change.id &&
+          change.position
+      );
+
+      if (positionChanges.length > 0) {
+        positionChanges.forEach((change) => {
+          positionBroadcastRef.current.set(
+            change.id,
+            change.position
+          );
+        });
+
+        clearTimeout(
+          positionBroadcastTimerRef.current
+        );
+
+        positionBroadcastTimerRef.current =
+          setTimeout(() => {
+            const positions = Object.fromEntries(
+              positionBroadcastRef.current.entries()
+            );
+
+            positionBroadcastRef.current.clear();
+
+            broadcastEdit("node_positions", {
+              positions,
+            });
+          }, 40);
+      }
+
+      const otherChanges = changes.filter(
+        (change) => change.type !== "position"
+      );
+
+      if (otherChanges.length > 0) {
+        broadcastEdit("nodes_change", {
+          changes: otherChanges,
+        });
+      }
+    },
+    [
+      onNodesChange,
+      canEdit,
+      broadcastEdit,
+    ]
+  );
+
+  const handleEdgesChange = useCallback(
+    (changes) => {
+      onEdgesChange(changes);
+
+      if (applyingRemoteRef.current || !canEdit) {
+        return;
+      }
+
+      broadcastEdit("edges_change", {
+        changes,
+      });
+    },
+    [
+      onEdgesChange,
+      canEdit,
+      broadcastEdit,
+    ]
+  );
+
+  const currentUserColor = getUserColor(
+    session.user.id
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    let editChannel;
+    let cursorChannel;
+
+    const connectCollaboration = async () => {
+      try {
+        await supabase.realtime.setAuth();
+
+        if (cancelled) return;
+
+        const editTopic = `mindmap-edit:${mindmap.id}`;
+        const cursorTopic = `mindmap-cursor:${mindmap.id}`;
+
+        editChannel = supabase.channel(
+          editTopic,
+          {
+            config: { private: true },
+          }
+        );
+
+        cursorChannel = supabase.channel(
+          cursorTopic,
+          {
+            config: { private: true },
+          }
+        );
+
+        editChannel
+          .on(
+            "broadcast",
+            { event: "node_add" },
+            ({ payload }) =>
+              applyRemoteOperation(
+                "node_add",
+                payload
+              )
+          )
+          .on(
+            "broadcast",
+            { event: "edge_add" },
+            ({ payload }) =>
+              applyRemoteOperation(
+                "edge_add",
+                payload
+              )
+          )
+          .on(
+            "broadcast",
+            { event: "nodes_delete" },
+            ({ payload }) =>
+              applyRemoteOperation(
+                "nodes_delete",
+                payload
+              )
+          )
+          .on(
+            "broadcast",
+            { event: "node_patch" },
+            ({ payload }) =>
+              applyRemoteOperation(
+                "node_patch",
+                payload
+              )
+          )
+          .on(
+            "broadcast",
+            { event: "node_positions" },
+            ({ payload }) =>
+              applyRemoteOperation(
+                "node_positions",
+                payload
+              )
+          )
+          .on(
+            "broadcast",
+            { event: "nodes_change" },
+            ({ payload }) =>
+              applyRemoteOperation(
+                "nodes_change",
+                payload
+              )
+          )
+          .on(
+            "broadcast",
+            { event: "edges_change" },
+            ({ payload }) =>
+              applyRemoteOperation(
+                "edges_change",
+                payload
+              )
+          )
+          .on(
+            "broadcast",
+            { event: "arrange" },
+            ({ payload }) =>
+              applyRemoteOperation(
+                "arrange",
+                payload
+              )
+          )
+          .on(
+            "broadcast",
+            { event: "snapshot_request" },
+            ({ payload }) =>
+              applyRemoteOperation(
+                "snapshot_request",
+                payload
+              )
+          )
+          .on(
+            "broadcast",
+            { event: "snapshot" },
+            ({ payload }) =>
+              applyRemoteOperation(
+                "snapshot",
+                payload
+              )
+          );
+
+        cursorChannel
+          .on(
+            "broadcast",
+            { event: "cursor" },
+            ({ payload }) => {
+              if (
+                !payload ||
+                payload.userId === session.user.id
+              ) {
+                return;
+              }
+
+              setRemoteCursors((current) => ({
+                ...current,
+                [payload.userId]: {
+                  ...payload,
+                  lastSeen: Date.now(),
+                },
+              }));
+            }
+          )
+          .on(
+            "presence",
+            { event: "sync" },
+            () => {
+              const state =
+                cursorChannel.presenceState();
+
+              const allUsers = Object.values(
+                state
+              ).flat();
+
+              const unique = new Map();
+
+              allUsers.forEach((user) => {
+                if (user?.userId) {
+                  unique.set(
+                    user.userId,
+                    user
+                  );
+                }
+              });
+
+              setCollaborators(
+                [...unique.values()].filter(
+                  (user) =>
+                    user.userId !==
+                    session.user.id
+                )
+              );
+            }
+          );
+
+        const statuses = await Promise.all([
+          new Promise((resolve) => {
+            editChannel.subscribe((status) => {
+              resolve(status);
+            });
+          }),
+          new Promise((resolve) => {
+            cursorChannel.subscribe(
+              (status) => {
+                resolve(status);
+              }
+            );
+          }),
+        ]);
+
+        if (cancelled) return;
+
+        if (
+          statuses[0] !== "SUBSCRIBED" ||
+          statuses[1] !== "SUBSCRIBED"
+        ) {
+          console.error(
+            "协作频道连接失败:",
+            statuses
+          );
+          return;
+        }
+
+        editChannelRef.current = editChannel;
+        cursorChannelRef.current =
+          cursorChannel;
+
+        setCollabConnected(true);
+
+        await cursorChannel.track({
+          userId: session.user.id,
+          email: session.user.email,
+          name: getDisplayName(
+            session.user
+          ),
+          avatar: getAvatarUrl(
+            session.user
+          ),
+          color: currentUserColor,
+        });
+
+        await editChannel.send({
+          type: "broadcast",
+          event: "snapshot_request",
+          payload: {
+            senderId: session.user.id,
+          },
+        });
+      } catch (error) {
+        console.error(
+          "协作系统连接失败:",
+          error
+        );
+      }
+    };
+
+    connectCollaboration();
+
+    return () => {
+      cancelled = true;
+      clearTimeout(
+        positionBroadcastTimerRef.current
+      );
+      cancelAnimationFrame(
+        cursorFrameRef.current
+      );
+
+      editChannelRef.current = null;
+      cursorChannelRef.current = null;
+
+      if (editChannel) {
+        supabase.removeChannel(
+          editChannel
+        );
+      }
+
+      if (cursorChannel) {
+        supabase.removeChannel(
+          cursorChannel
+        );
+      }
+
+      setCollaborators([]);
+      setRemoteCursors({});
+      setCollabConnected(false);
+    };
+  }, [
+    mindmap.id,
+    session.user.id,
+    session.user.email,
+    currentUserColor,
+    canEdit,
+  ]);
+
+  useEffect(() => {
+    const cleanup = setInterval(() => {
+      const now = Date.now();
+
+      setRemoteCursors((current) => {
+        const next = {};
+        let changed = false;
+
+        Object.entries(current).forEach(
+          ([userId, cursor]) => {
+            if (now - cursor.lastSeen < 3000) {
+              next[userId] = cursor;
+            } else {
+              changed = true;
+            }
+          }
+        );
+
+        return changed ? next : current;
+      });
+    }, 1000);
+
+    return () => clearInterval(cleanup);
+  }, []);
+
+  const handleCanvasMouseMove = (event) => {
+    const channel = cursorChannelRef.current;
+    const canvas = canvasRef.current;
+
+    if (!channel || !canvas) {
+      return;
+    }
+
+    const rect = canvas.getBoundingClientRect();
+
+    pendingCursorRef.current = {
+      userId: session.user.id,
+      name: getDisplayName(session.user),
+      avatar: getAvatarUrl(session.user),
+      color: currentUserColor,
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+
+    if (cursorFrameRef.current) {
+      return;
+    }
+
+    cursorFrameRef.current =
+      requestAnimationFrame(() => {
+        cursorFrameRef.current = null;
+
+        const payload =
+          pendingCursorRef.current;
+
+        if (!payload) return;
+
+        channel.send({
+          type: "broadcast",
+          event: "cursor",
+          payload,
+        });
+      });
+  };
+
+  const handleCanvasMouseLeave = () => {
+    pendingCursorRef.current = null;
+  };
+
   /* =========================
      键盘快捷键
   ========================= */
@@ -2282,8 +2795,7 @@ const uploadImage = async (nodeId, file) => {
       ) {
         return;
       }
-
- if (
+      if (
   event.ctrlKey &&
   event.key.toLowerCase() === "a"
 ) {
@@ -2512,21 +3024,69 @@ return (
             {saving ? "保存中..." : "已保存"}
           </span>
 
-          <button
-  onClick={() => {
-    setShareOpen(true);
-    loadShares();
-  }}
->
-  分享
-</button>
+          <div className="collab-users">
+            <button
+              type="button"
+              className="user-button collab-avatar-button"
+              onClick={logout}
+              title="退出登录"
+            >
+              {getAvatarUrl(session.user) ? (
+                <img
+                  src={getAvatarUrl(session.user)}
+                  alt=""
+                />
+              ) : (
+                getAvatarInitial(
+                  getDisplayName(session.user)
+                )
+              )}
+            </button>
+
+            {collaborators.slice(0, 4).map((user) => (
+              <div
+                key={user.userId}
+                className="collab-avatar"
+                title={user.name || user.email || "用户"}
+              >
+                {user.avatar ? (
+                  <img src={user.avatar} alt="" />
+                ) : (
+                  getAvatarInitial(
+                    user.name || user.email
+                  )
+                )}
+              </div>
+            ))}
+
+            {collaborators.length > 4 && (
+              <div
+                className="collab-avatar more"
+                title={`${collaborators.length - 4} 位其他协作者在线`}
+              >
+                +{collaborators.length - 4}
+              </div>
+            )}
+          </div>
+
+          <span
+            className={`collab-status ${
+              collabConnected ? "online" : "offline"
+            }`}
+            title={
+              collabConnected
+                ? "实时协作已连接"
+                : "实时协作未连接"
+            }
+          />
 
           <button
-            className="user-button"
-            onClick={logout}
-            title="退出登录"
+            onClick={() => {
+              setShareOpen(true);
+              loadShares();
+            }}
           >
-            👤
+            分享
           </button>
         </div>
       </header>
@@ -2538,10 +3098,10 @@ return (
             onClick={() => {
               if (!selectedNode) {
   setDialog({
-  type: "message",
-  title: "无法添加节点",
-  message: "请先选择一个节点。",
-});
+    type: "message",
+    title: "无法添加节点",
+    message: "请先选择一个节点。",
+  });
   return;
               }
 
@@ -2626,7 +3186,7 @@ return (
     if (!selectedNode) {
      setDialog({
   type: "message",
-  title: "无法添加节点",
+  title: "无法添加图片",
   message: "请先选择一个节点。",
 });
       return;
@@ -2642,7 +3202,12 @@ return (
 </button>
         </aside>
 
-        <main className="canvas">
+        <main
+          ref={canvasRef}
+          className="canvas"
+          onMouseMove={handleCanvasMouseMove}
+          onMouseLeave={handleCanvasMouseLeave}
+        >
           {shareOpen && (
   <div className="share-overlay">
     <div
@@ -2729,6 +3294,42 @@ return (
     </div>
   </div>
 )}
+          <div className="collab-cursors">
+            {Object.values(remoteCursors).map(
+              (cursor) => (
+                <div
+                  key={cursor.userId}
+                  className="remote-cursor"
+                  style={{
+                    left: cursor.x,
+                    top: cursor.y,
+                  }}
+                >
+                  <div
+                    className="remote-cursor-pointer"
+                    style={{
+                      borderTopColor:
+                        cursor.color ||
+                        "#6C63FF",
+                    }}
+                  />
+
+                  <div
+                    className="remote-cursor-label"
+                    style={{
+                      backgroundColor:
+                        cursor.color ||
+                        "#6C63FF",
+                    }}
+                  >
+                    {cursor.name ||
+                      "用户"}
+                  </div>
+                </div>
+              )
+            )}
+          </div>
+
           <input
   ref={fileInputRef}
   type="file"
@@ -2752,25 +3353,15 @@ return (
           selectionKeyCode="Control"
 multiSelectionKeyCode="Control"
 selectionMode="partial"
-nodesDraggable={canEdit}
+nodesDraggable={canEdit && editingNode === null}
 nodesConnectable={canEdit}
             nodes={nodes.map((node) => {
   if (editingNode !== node.id) {
-    if (!isArranging) {
-      return node;
-    }
-
-    return {
-      ...node,
-      className: "mind-node-arranging",
-    };
+    return node;
   }
 
   return {
     ...node,
-    className: isArranging
-      ? "mind-node-arranging"
-      : "",
     data: {
       ...node.data,
       label: (
@@ -2800,14 +3391,14 @@ nodesConnectable={canEdit}
   };
 })}
 edges={edges}
-onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
+onNodesChange={handleNodesChange}
+            onEdgesChange={handleEdgesChange}
             onConnect={onConnect}
             nodeTypes={nodeTypes}
             onNodeClick={(_, node) => {
-  setSelectedNode(node.id);
-  setContextMenu(null);
-}}
+              setSelectedNode(node.id);
+              setContextMenu(null);
+            }}
             onNodeDoubleClick={(_, node) => {
               startEditing(
                 node.id,
@@ -2815,33 +3406,34 @@ onNodesChange={onNodesChange}
               );
             }}
             onNodeContextMenu={handleNodeContextMenu}
-           onSelectionChange={({ nodes: selectedReactNodes }) => {
-  const ids = selectedReactNodes.map(
-    (node) => node.id
-  );
+            onSelectionChange={({
+              nodes: selectedReactNodes,
+            }) => {
+              const ids =
+                selectedReactNodes.map(
+                  (node) => node.id
+                );
 
-  setSelectedNodes((current) => {
-    if (
-      current.length === ids.length &&
-      current.every(
-        (id, index) => id === ids[index]
-      )
-    ) {
-      return current;
-    }
+              setSelectedNodes((current) => {
+                if (
+                  current.length === ids.length &&
+                  current.every(
+                    (id, index) =>
+                      id === ids[index]
+                  )
+                ) {
+                  return current;
+                }
 
-    return ids;
-  });
+                return ids;
+              });
 
-  /*
-    只有单选时才存在“当前节点”。
-    多选时 selectedNode 清空，
-    防止“编辑节点 / 添加节点”误操作某一个节点。
-  */
-  setSelectedNode(
-    ids.length === 1 ? ids[0] : null
-  );
-}}
+              setSelectedNode(
+                ids.length === 1
+                  ? ids[0]
+                  : null
+              );
+            }}
             onPaneClick={() => {
   setSelectedNode(null);
   setSelectedNodes([]);

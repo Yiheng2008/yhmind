@@ -1,0 +1,262 @@
+
+/* =========================
+   YHMind realtime collaboration
+========================= */
+
+.collab-users {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.collab-avatar-button,
+.collab-avatar {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  border: 2px solid #ffffff;
+  box-sizing: border-box;
+}
+
+.collab-avatar-button {
+  padding: 0;
+  background: #111827;
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+}
+
+.collab-avatar-button img,
+.collab-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.collab-avatar {
+  background: #eef0f6;
+  color: #343a55;
+  margin-left: -8px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.10);
+}
+
+.collab-avatar:first-child {
+  margin-left: 0;
+}
+
+.collab-avatar.more {
+  background: #f1f2f6;
+  color: #555b72;
+  margin-left: -8px;
+}
+
+.collab-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: 0 0 auto;
+  margin: 0 4px 0 2px;
+  background: #b9becb;
+}
+
+.collab-status.online {
+  background: #36b37e;
+  box-shadow: 0 0 0 3px rgba(54, 179, 126, 0.12);
+}
+
+.collab-status.offline {
+  background: #b9becb;
+}
+
+/* Remote cursor overlay */
+.collab-cursors {
+  position: absolute;
+  inset: 0;
+  z-index: 5000;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.remote-cursor {
+  position: absolute;
+  transform: translate(-2px, -2px);
+  pointer-events: none;
+  will-change: left, top;
+}
+
+.remote-cursor-pointer {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 3px solid transparent;
+  border-top: 14px solid;
+  transform: rotate(-24deg);
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.18));
+}
+
+.remote-cursor-label {
+  position: absolute;
+  left: 8px;
+  top: 11px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.15);
+}
+
+/* Auto-arrange transition */
+.react-flow__node.mind-node-arranging {
+  transition: transform 450ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+/* Color picker */
+.app-dialog-color {
+  width: 380px;
+  max-width: calc(100vw - 32px);
+}
+
+.color-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.color-picker-square {
+  position: relative;
+  width: 100%;
+  height: 220px;
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.color-picker-white {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to right,
+    #ffffff 0%,
+    rgba(255, 255, 255, 0) 100%
+  );
+}
+
+.color-picker-black {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    #000000 0%,
+    rgba(0, 0, 0, 0) 100%
+  );
+}
+
+.color-picker-handle {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.color-picker-hue {
+  position: relative;
+  height: 18px;
+  border-radius: 999px;
+  cursor: pointer;
+  touch-action: none;
+  background: linear-gradient(
+    to right,
+    #ff0000 0%,
+    #ffff00 16.6%,
+    #00ff00 33.3%,
+    #00ffff 50%,
+    #0000ff 66.6%,
+    #ff00ff 83.3%,
+    #ff0000 100%
+  );
+}
+
+.color-picker-hue-handle {
+  position: absolute;
+  top: 50%;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.color-picker-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: #555555;
+}
+
+.color-picker-preview {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid #dddddd;
+}
+
+.color-picker-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #555555;
+}
+
+.color-picker-presets {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 10px;
+}
+
+.color-preset {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.color-preset:hover {
+  transform: translateY(-1px);
+}
+
+.color-preset.active {
+  box-shadow:
+    0 0 0 2px #ffffff,
+    0 0 0 4px #777777;
+}
+
+/* Editing state: no drag cursor */
+.react-flow__node:has(.node-edit-input) {
+  cursor: text;
+}
+
+.node-edit-input {
+  cursor: text;
+}
