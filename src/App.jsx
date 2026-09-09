@@ -216,56 +216,102 @@ function arrangeMindMap(nodes, edges, selectedIds) {
     },
   };
 
-  const GAP = 300;
-  const SIBLING_GAP = 135;
+  /*
+    距离参数
+
+    DEPTH_GAP：
+    父节点到子节点的距离
+
+    SIBLING_GAP：
+    同级节点之间的距离
+  */
+
+  const DEPTH_GAP = 260;
+  const SIBLING_GAP = 95;
 
   /*
-    计算一个选中子树需要占用多少个“叶子位置”
-  */
-  const leafMemo = new Map();
+    返回某个子树在“横向/纵向宽度”上
+    大概需要占多少个单位。
 
-  const selectedChildren = (nodeId) => {
-    return (childrenMap[nodeId] || []).filter(
-      (childId) => selectedSet.has(childId)
+    和之前不同：
+    不再把所有叶子数量直接加起来。
+
+    我们只关心每一层最多有多少节点，
+    这样链很长的时候不会把整张图撑爆。
+  */
+
+  const profileMemo = new Map();
+
+  const getProfile = (nodeId) => {
+    if (profileMemo.has(nodeId)) {
+      return profileMemo.get(nodeId);
+    }
+
+    const profile = [1];
+
+    const children = (
+      childrenMap[nodeId] || []
+    ).filter((childId) =>
+      selectedSet.has(childId)
     );
+
+    children.forEach((childId) => {
+      const childProfile =
+        getProfile(childId);
+
+      childProfile.forEach(
+        (count, depth) => {
+          const targetDepth =
+            depth + 1;
+
+          profile[targetDepth] =
+            (profile[targetDepth] || 0) +
+            count;
+        }
+      );
+    });
+
+    profileMemo.set(nodeId, profile);
+
+    return profile;
   };
 
-  const leafCount = (nodeId) => {
-    if (leafMemo.has(nodeId)) {
-      return leafMemo.get(nodeId);
-    }
+  const getBreadth = (nodeId) => {
+    const profile = getProfile(nodeId);
 
-    const children = selectedChildren(nodeId);
-
-    if (children.length === 0) {
-      const result = selectedSet.has(nodeId) ? 1 : 0;
-      leafMemo.set(nodeId, result);
-      return result;
-    }
-
-    const result = children.reduce(
-      (sum, childId) =>
-        sum + Math.max(leafCount(childId), 1),
-      0
-    );
-
-    leafMemo.set(nodeId, result);
-
-    return result;
+    return Math.max(...profile, 1);
   };
 
   /*
-    沿某一个方向，把一个节点的子节点规则展开。
-
-    direction：
-    这个分支整体向哪个方向走。
-
-    parentPosition：
-    当前父节点的位置。
-
-    children：
-    当前需要移动的选中子节点。
+    得到当前节点选中的直接子节点
   */
+
+  const getSelectedChildren = (nodeId) =>
+    (childrenMap[nodeId] || []).filter(
+      (childId) =>
+        selectedSet.has(childId)
+    );
+
+  /*
+    把一个分支沿指定方向展开。
+
+    direction = 主分支前进方向
+
+    例如：
+
+    右边：
+    direction = 0
+
+    上边：
+    direction = -90°
+
+    下边：
+    direction = 90°
+
+    左边：
+    direction = 180°
+  */
+
   const placeChildren = (
     parentPosition,
     direction,
@@ -275,78 +321,118 @@ function arrangeMindMap(nodes, edges, selectedIds) {
       return;
     }
 
-    const perp = {
+    /*
+      与主方向垂直的方向。
+
+      右 → 上下分开
+      上 → 左右分开
+      左 → 上下分开
+      下 → 左右分开
+    */
+
+    const perpendicular = {
       x: -Math.sin(direction),
       y: Math.cos(direction),
     };
 
     /*
-      根据原来的相对位置排序，
-      避免整理后兄弟节点顺序突然颠倒。
+      保留用户原本的兄弟节点顺序。
     */
-    const orderedChildren = [...children].sort(
-      (a, b) => {
-        const nodeA = nodeMap[a];
-        const nodeB = nodeMap[b];
 
-        const offsetA =
-          (nodeA.position.x - parentPosition.x) *
-            perp.x +
-          (nodeA.position.y - parentPosition.y) *
-            perp.y;
+    const orderedChildren = [
+      ...children,
+    ].sort((a, b) => {
+      const nodeA = nodeMap[a];
+      const nodeB = nodeMap[b];
 
-        const offsetB =
-          (nodeB.position.x - parentPosition.x) *
-            perp.x +
-          (nodeB.position.y - parentPosition.y) *
-            perp.y;
+      const offsetA =
+        (nodeA.position.x -
+          parentPosition.x) *
+          perpendicular.x +
+        (nodeA.position.y -
+          parentPosition.y) *
+          perpendicular.y;
 
-        return offsetA - offsetB;
-      }
-    );
+      const offsetB =
+        (nodeB.position.x -
+          parentPosition.x) *
+          perpendicular.x +
+        (nodeB.position.y -
+          parentPosition.y) *
+          perpendicular.y;
 
-    const spans = orderedChildren.map(
+      return offsetA - offsetB;
+    });
+
+    /*
+      计算每个子树需要占用的空间。
+
+      这里只取“这一整棵子树某一层最大宽度”，
+      不再把所有叶子无限累加。
+    */
+
+    const widths = orderedChildren.map(
       (childId) =>
-        Math.max(leafCount(childId), 1)
+        Math.max(
+          getBreadth(childId),
+          1
+        )
     );
 
-    const totalSpan = spans.reduce(
-      (sum, span) => sum + span,
-      0
-    );
+    const totalWidth =
+      widths.reduce(
+        (sum, value) =>
+          sum + value,
+        0
+      );
 
     let cursor =
-      -((totalSpan - 1) * SIBLING_GAP) / 2;
+      -((totalWidth - 1) *
+        SIBLING_GAP) /
+      2;
 
     orderedChildren.forEach(
       (childId, index) => {
-        const span = spans[index];
+        const width =
+          widths[index];
 
         /*
-          当前子树占用一段空间，
-          取这一段的中心作为子节点位置。
+          当前子树自己的中心位置。
         */
-        const offset =
+
+        const localOffset =
           cursor +
-          ((span - 1) * SIBLING_GAP) / 2;
+          ((width - 1) *
+            SIBLING_GAP) /
+            2;
 
         const childPosition = {
           x:
             parentPosition.x +
-            Math.cos(direction) * GAP +
-            perp.x * offset,
+            Math.cos(direction) *
+              DEPTH_GAP +
+            perpendicular.x *
+              localOffset,
 
           y:
             parentPosition.y +
-            Math.sin(direction) * GAP +
-            perp.y * offset,
+            Math.sin(direction) *
+              DEPTH_GAP +
+            perpendicular.y *
+              localOffset,
         };
 
         newPositions[childId] =
           childPosition;
 
+        /*
+          子节点继续沿完全相同的方向展开。
+        */
+
         const grandchildren =
-          selectedChildren(childId);
+          getSelectedChildren(
+            childId
+          );
 
         placeChildren(
           childPosition,
@@ -355,46 +441,54 @@ function arrangeMindMap(nodes, edges, selectedIds) {
         );
 
         cursor +=
-          span * SIBLING_GAP;
+          width *
+          SIBLING_GAP;
       }
     );
   };
 
   /*
-    判断是不是“整个导图都参与排列”。
+    判断是否是“全图排列”。
 
-    root 即使没选中，也认为整张导图被选中了，
-    因为 root 永远只是中心锚点，不移动。
+    root 不需要选中，
+    它永远是固定中心。
   */
-  const wholeMapSelected = nodes.every(
-    (node) =>
-      node.id === "root" ||
-      selectedSet.has(node.id)
-  );
+
+  const wholeMapSelected =
+    nodes.every(
+      (node) =>
+        node.id === "root" ||
+        selectedSet.has(node.id)
+    );
 
   /*
-    ============================
-    情况一：整个导图排列
-    ============================
+    =====================================
+    情况 1：整个导图排列
+    =====================================
   */
 
   if (wholeMapSelected) {
     const rootChildren =
       childrenMap[root.id] || [];
 
-    if (rootChildren.length === 0) {
+    if (
+      rootChildren.length === 0
+    ) {
       return newPositions;
     }
 
     /*
-      第一层节点均分 360°。
+      一级节点严格均分 360°。
 
-      2 个：180°
-      3 个：120°
-      4 个：90°
-      5 个：72°
+      2 → 180°
+      3 → 120°
+      4 → 90°
+      5 → 72°
       ...
+
+      0° 从右侧开始。
     */
+
     const angleStep =
       (Math.PI * 2) /
       rootChildren.length;
@@ -407,18 +501,27 @@ function arrangeMindMap(nodes, edges, selectedIds) {
         const childPosition = {
           x:
             root.position.x +
-            Math.cos(direction) * GAP,
+            Math.cos(direction) *
+              DEPTH_GAP,
 
           y:
             root.position.y +
-            Math.sin(direction) * GAP,
+            Math.sin(direction) *
+              DEPTH_GAP,
         };
 
         newPositions[childId] =
           childPosition;
 
+        /*
+          这一整条分支都沿自己的
+          一级节点方向继续展开。
+        */
+
         const grandchildren =
-          selectedChildren(childId);
+          getSelectedChildren(
+            childId
+          );
 
         placeChildren(
           childPosition,
@@ -429,8 +532,9 @@ function arrangeMindMap(nodes, edges, selectedIds) {
     );
 
     /*
-      中心节点永远不移动。
+      中心节点绝对不移动。
     */
+
     newPositions[root.id] = {
       x: root.position.x,
       y: root.position.y,
@@ -440,30 +544,24 @@ function arrangeMindMap(nodes, edges, selectedIds) {
   }
 
   /*
-    ============================
-    情况二：只排列选中的部分
-    ============================
-
-    找到每个“选中区域”的最顶层节点。
+    =====================================
+    情况 2：局部排列
+    =====================================
 
     例如：
 
-    A
-    ├── B
-    │   └── C
-    └── D
+          C
+          |
+    A ——— B ——— D
 
-    只选 B + C：
+    只选 C / D
 
-    A 不动
-    B 移动
-    C 跟着 B 移动
-
-    A 就是锚点。
+    B 作为锚点，
+    B 完全不动。
   */
 
-  const rootsToArrange = nodes.filter(
-    (node) => {
+  const topSelectedNodes =
+    nodes.filter((node) => {
       if (
         node.id === "root" ||
         !selectedSet.has(node.id)
@@ -471,56 +569,64 @@ function arrangeMindMap(nodes, edges, selectedIds) {
         return false;
       }
 
-      const parentEdge = edges.find(
-        (edge) => edge.target === node.id
-      );
+      const parentEdge =
+        edges.find(
+          (edge) =>
+            edge.target === node.id
+        );
 
-      /*
-        没有父节点的孤立节点，
-        不参与局部整理。
-      */
       if (!parentEdge) {
         return false;
       }
 
-      const parentId = parentEdge.source;
+      const parentId =
+        parentEdge.source;
 
       /*
-        父节点没有选中，
-        或者父节点就是 root。
-
-        root 永远视为固定锚点，
-        即使 Ctrl+A 时 root 自己也被选中。
+        如果父节点没选中，
+        当前节点就是这个局部区域的根。
       */
-      return (
-        !selectedSet.has(parentId) ||
-        parentId === root.id
+
+      return !selectedSet.has(
+        parentId
+      );
+    });
+
+  /*
+    按锚点分组。
+  */
+
+  const anchorGroups = {};
+
+  topSelectedNodes.forEach(
+    (node) => {
+      const parentEdge =
+        edges.find(
+          (edge) =>
+            edge.target === node.id
+        );
+
+      if (!parentEdge) {
+        return;
+      }
+
+      const anchorId =
+        parentEdge.source;
+
+      if (!anchorGroups[anchorId]) {
+        anchorGroups[anchorId] =
+          [];
+      }
+
+      anchorGroups[anchorId].push(
+        node.id
       );
     }
   );
 
-  const groups = {};
-
-  rootsToArrange.forEach((node) => {
-    const parentEdge = edges.find(
-      (edge) => edge.target === node.id
-    );
-
-    if (!parentEdge) {
-      return;
-    }
-
-    const anchorId =
-      parentEdge.source;
-
-    if (!groups[anchorId]) {
-      groups[anchorId] = [];
-    }
-
-    groups[anchorId].push(node.id);
-  });
-
-  Object.entries(groups).forEach(
+  Object.entries(
+    anchorGroups
+  ).forEach(
     ([anchorId, childIds]) => {
       const anchor =
         nodeMap[anchorId];
@@ -530,33 +636,114 @@ function arrangeMindMap(nodes, edges, selectedIds) {
       }
 
       /*
-        根据当前节点相对于锚点的位置，
-        找出这个分支原本的大致方向。
+        root 下只选择了一部分节点时，
+        保留它们原来的方向。
+
+        例如：
+        一个在右边，
+        一个在上边，
+
+        不会被平均成右上角。
+      */
+
+      if (
+        anchorId === root.id &&
+        childIds.length > 1
+      ) {
+        childIds.forEach(
+          (childId) => {
+            const node =
+              nodeMap[childId];
+
+            let dx =
+              node.position.x -
+              anchor.position.x;
+
+            let dy =
+              node.position.y -
+              anchor.position.y;
+
+            if (
+              Math.abs(dx) <
+                0.001 &&
+              Math.abs(dy) <
+                0.001
+            ) {
+              dx = 1;
+              dy = 0;
+            }
+
+            const direction =
+              Math.atan2(
+                dy,
+                dx
+              );
+
+            const childPosition = {
+              x:
+                anchor.position.x +
+                Math.cos(
+                  direction
+                ) *
+                  DEPTH_GAP,
+
+              y:
+                anchor.position.y +
+                Math.sin(
+                  direction
+                ) *
+                  DEPTH_GAP,
+            };
+
+            newPositions[
+              childId
+            ] = childPosition;
+
+            const grandchildren =
+              getSelectedChildren(
+                childId
+              );
+
+            placeChildren(
+              childPosition,
+              direction,
+              grandchildren
+            );
+          }
+        );
+
+        return;
+      }
+
+      /*
+        一般情况：
+        根据原来的位置判断这个分支
+        朝哪个方向展开。
       */
 
       let dx = 0;
       let dy = 0;
 
-      childIds.forEach((childId) => {
-        const node =
-          nodeMap[childId];
+      childIds.forEach(
+        (childId) => {
+          const node =
+            nodeMap[childId];
 
-        dx +=
-          node.position.x -
-          anchor.position.x;
+          dx +=
+            node.position.x -
+            anchor.position.x;
 
-        dy +=
-          node.position.y -
-          anchor.position.y;
-      });
+          dy +=
+            node.position.y -
+            anchor.position.y;
+        }
+      );
 
-      /*
-        如果刚好互相抵消，
-        就使用第一个节点原来的方向。
-      */
       if (
-        Math.abs(dx) < 0.001 &&
-        Math.abs(dy) < 0.001
+        Math.abs(dx) <
+          0.001 &&
+        Math.abs(dy) <
+          0.001
       ) {
         const firstNode =
           nodeMap[childIds[0]];
@@ -570,21 +757,8 @@ function arrangeMindMap(nodes, edges, selectedIds) {
           anchor.position.y;
       }
 
-      let direction = Math.atan2(
-        dy,
-        dx
-      );
-
-      /*
-        如果真的完全没有方向，
-        默认向右。
-      */
-      if (
-        Math.abs(dx) < 0.001 &&
-        Math.abs(dy) < 0.001
-      ) {
-        direction = 0;
-      }
+      const direction =
+        Math.atan2(dy, dx);
 
       placeChildren(
         {
@@ -598,8 +772,9 @@ function arrangeMindMap(nodes, edges, selectedIds) {
   );
 
   /*
-    root 永远保持原位。
+    root 永远不动。
   */
+
   newPositions[root.id] = {
     x: root.position.x,
     y: root.position.y,
@@ -1514,20 +1689,22 @@ const autoArrange = () => {
     setDialog({
       type: "message",
       title: "无法排列",
-      message: "请先选择要排列的节点。可以使用 Ctrl + A 全选。",
+      message:
+        "请先选择要排列的节点。可以使用 Ctrl + A 全选。",
     });
     return;
   }
 
-  const newPositions = arrangeMindMap(
-    nodes,
-    edges,
-    selectedNodes
-  );
+  const newPositions =
+    arrangeMindMap(
+      nodes,
+      edges,
+      selectedNodes
+    );
 
   if (
-    !newPositions ||
-    Object.keys(newPositions).length === 0
+    Object.keys(newPositions)
+      .length === 0
   ) {
     return;
   }
@@ -1536,25 +1713,50 @@ const autoArrange = () => {
 
   setNodes((nds) =>
     nds.map((node) => {
-      const nextPosition =
+      const position =
         newPositions[node.id];
 
-      if (!nextPosition) {
+      if (!position) {
         return node;
       }
 
       return {
         ...node,
-        position: nextPosition,
+        position,
+        className:
+          "mind-node-arranging",
       };
     })
   );
 
-  clearTimeout(arrangeTimerRef.current);
+  /*
+    排列后的线直接使用直线。
+    对于上下左右的径向结构，
+    会比 smoothstep 干净很多。
+  */
 
-  arrangeTimerRef.current = setTimeout(() => {
-    setIsArranging(false);
-  }, 450);
+  setEdges((eds) =>
+    eds.map((edge) => ({
+      ...edge,
+      type: "straight",
+    }))
+  );
+
+  clearTimeout(
+    arrangeTimerRef.current
+  );
+
+  arrangeTimerRef.current =
+    setTimeout(() => {
+      setIsArranging(false);
+
+      setNodes((nds) =>
+        nds.map((node) => ({
+          ...node,
+          className: "",
+        }))
+      );
+    }, 450);
 };
 
   const onConnect = useCallback(
@@ -1565,7 +1767,7 @@ const autoArrange = () => {
         addEdge(
           {
             ...params,
-            type: "smoothstep",
+            type: "straight",
           },
           eds
         )
