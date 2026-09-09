@@ -81,7 +81,532 @@ const defaultNodes = [
 ];
 
 const defaultEdges = [];
+const COLOR_PRESETS = [
+  "#F4CCCC",
+  "#FCE5CD",
+  "#FFF2CC",
+  "#D9EAD3",
+  "#D0E0E3",
+  "#CFE2F3",
+  "#D9D2E9",
+  "#E6E6E6",
+];
 
+function hexToHsv(hex) {
+  let value = (hex || "#ffffff").replace("#", "").trim();
+
+  if (value.length === 3) {
+    value = value
+      .split("")
+      .map((char) => char + char)
+      .join("");
+  }
+
+  if (!/^[0-9a-fA-F]{6}$/.test(value)) {
+    value = "ffffff";
+  }
+
+  const r = parseInt(value.slice(0, 2), 16) / 255;
+  const g = parseInt(value.slice(2, 4), 16) / 255;
+  const b = parseInt(value.slice(4, 6), 16) / 255;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const delta = max - min;
+
+  let h = 0;
+
+  if (delta !== 0) {
+    if (max === r) {
+      h = 60 * (((g - b) / delta) % 6);
+    } else if (max === g) {
+      h = 60 * ((b - r) / delta + 2);
+    } else {
+      h = 60 * ((r - g) / delta + 4);
+    }
+  }
+
+  if (h < 0) {
+    h += 360;
+  }
+
+  const s = max === 0 ? 0 : delta / max;
+  const v = max;
+
+  return {
+    h,
+    s,
+    v,
+  };
+}
+
+function hsvToHex(h, s, v) {
+  const c = v * s;
+  const x =
+    c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+
+  let r = 0;
+  let g = 0;
+  let b = 0;
+
+  if (h < 60) {
+    r = c;
+    g = x;
+  } else if (h < 120) {
+    r = x;
+    g = c;
+  } else if (h < 180) {
+    g = c;
+    b = x;
+  } else if (h < 240) {
+    g = x;
+    b = c;
+  } else if (h < 300) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+
+  const toHex = (number) =>
+    Math.round((number + m) * 255)
+      .toString(16)
+      .padStart(2, "0");
+
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function arrangeMindMap(nodes, edges, selectedIds) {
+  const selectedSet = new Set(selectedIds);
+
+  if (!nodes.length || selectedSet.size === 0) {
+    return {};
+  }
+
+  const root = nodes.find(
+    (node) => node.id === "root"
+  );
+
+  if (!root) {
+    return {};
+  }
+
+  const nodeMap = Object.fromEntries(
+    nodes.map((node) => [node.id, node])
+  );
+
+  const childrenMap = {};
+
+  nodes.forEach((node) => {
+    childrenMap[node.id] = [];
+  });
+
+  edges.forEach((edge) => {
+    if (childrenMap[edge.source]) {
+      childrenMap[edge.source].push(edge.target);
+    }
+  });
+
+  const newPositions = {
+    [root.id]: {
+      x: root.position.x,
+      y: root.position.y,
+    },
+  };
+
+  const GAP = 300;
+  const SIBLING_GAP = 135;
+
+  /*
+    计算一个选中子树需要占用多少个“叶子位置”
+  */
+  const leafMemo = new Map();
+
+  const selectedChildren = (nodeId) => {
+    return (childrenMap[nodeId] || []).filter(
+      (childId) => selectedSet.has(childId)
+    );
+  };
+
+  const leafCount = (nodeId) => {
+    if (leafMemo.has(nodeId)) {
+      return leafMemo.get(nodeId);
+    }
+
+    const children = selectedChildren(nodeId);
+
+    if (children.length === 0) {
+      const result = selectedSet.has(nodeId) ? 1 : 0;
+      leafMemo.set(nodeId, result);
+      return result;
+    }
+
+    const result = children.reduce(
+      (sum, childId) =>
+        sum + Math.max(leafCount(childId), 1),
+      0
+    );
+
+    leafMemo.set(nodeId, result);
+
+    return result;
+  };
+
+  /*
+    沿某一个方向，把一个节点的子节点规则展开。
+
+    direction：
+    这个分支整体向哪个方向走。
+
+    parentPosition：
+    当前父节点的位置。
+
+    children：
+    当前需要移动的选中子节点。
+  */
+  const placeChildren = (
+    parentPosition,
+    direction,
+    children
+  ) => {
+    if (!children.length) {
+      return;
+    }
+
+    const perp = {
+      x: -Math.sin(direction),
+      y: Math.cos(direction),
+    };
+
+    /*
+      根据原来的相对位置排序，
+      避免整理后兄弟节点顺序突然颠倒。
+    */
+    const orderedChildren = [...children].sort(
+      (a, b) => {
+        const nodeA = nodeMap[a];
+        const nodeB = nodeMap[b];
+
+        const offsetA =
+          (nodeA.position.x - parentPosition.x) *
+            perp.x +
+          (nodeA.position.y - parentPosition.y) *
+            perp.y;
+
+        const offsetB =
+          (nodeB.position.x - parentPosition.x) *
+            perp.x +
+          (nodeB.position.y - parentPosition.y) *
+            perp.y;
+
+        return offsetA - offsetB;
+      }
+    );
+
+    const spans = orderedChildren.map(
+      (childId) =>
+        Math.max(leafCount(childId), 1)
+    );
+
+    const totalSpan = spans.reduce(
+      (sum, span) => sum + span,
+      0
+    );
+
+    let cursor =
+      -((totalSpan - 1) * SIBLING_GAP) / 2;
+
+    orderedChildren.forEach(
+      (childId, index) => {
+        const span = spans[index];
+
+        /*
+          当前子树占用一段空间，
+          取这一段的中心作为子节点位置。
+        */
+        const offset =
+          cursor +
+          ((span - 1) * SIBLING_GAP) / 2;
+
+        const childPosition = {
+          x:
+            parentPosition.x +
+            Math.cos(direction) * GAP +
+            perp.x * offset,
+
+          y:
+            parentPosition.y +
+            Math.sin(direction) * GAP +
+            perp.y * offset,
+        };
+
+        newPositions[childId] =
+          childPosition;
+
+        const grandchildren =
+          selectedChildren(childId);
+
+        placeChildren(
+          childPosition,
+          direction,
+          grandchildren
+        );
+
+        cursor +=
+          span * SIBLING_GAP;
+      }
+    );
+  };
+
+  /*
+    判断是不是“整个导图都参与排列”。
+
+    root 即使没选中，也认为整张导图被选中了，
+    因为 root 永远只是中心锚点，不移动。
+  */
+  const wholeMapSelected = nodes.every(
+    (node) =>
+      node.id === "root" ||
+      selectedSet.has(node.id)
+  );
+
+  /*
+    ============================
+    情况一：整个导图排列
+    ============================
+  */
+
+  if (wholeMapSelected) {
+    const rootChildren =
+      childrenMap[root.id] || [];
+
+    if (rootChildren.length === 0) {
+      return newPositions;
+    }
+
+    /*
+      第一层节点均分 360°。
+
+      2 个：180°
+      3 个：120°
+      4 个：90°
+      5 个：72°
+      ...
+    */
+    const angleStep =
+      (Math.PI * 2) /
+      rootChildren.length;
+
+    rootChildren.forEach(
+      (childId, index) => {
+        const direction =
+          index * angleStep;
+
+        const childPosition = {
+          x:
+            root.position.x +
+            Math.cos(direction) * GAP,
+
+          y:
+            root.position.y +
+            Math.sin(direction) * GAP,
+        };
+
+        newPositions[childId] =
+          childPosition;
+
+        const grandchildren =
+          selectedChildren(childId);
+
+        placeChildren(
+          childPosition,
+          direction,
+          grandchildren
+        );
+      }
+    );
+
+    /*
+      中心节点永远不移动。
+    */
+    newPositions[root.id] = {
+      x: root.position.x,
+      y: root.position.y,
+    };
+
+    return newPositions;
+  }
+
+  /*
+    ============================
+    情况二：只排列选中的部分
+    ============================
+
+    找到每个“选中区域”的最顶层节点。
+
+    例如：
+
+    A
+    ├── B
+    │   └── C
+    └── D
+
+    只选 B + C：
+
+    A 不动
+    B 移动
+    C 跟着 B 移动
+
+    A 就是锚点。
+  */
+
+  const rootsToArrange = nodes.filter(
+    (node) => {
+      if (
+        node.id === "root" ||
+        !selectedSet.has(node.id)
+      ) {
+        return false;
+      }
+
+      const parentEdge = edges.find(
+        (edge) => edge.target === node.id
+      );
+
+      /*
+        没有父节点的孤立节点，
+        不参与局部整理。
+      */
+      if (!parentEdge) {
+        return false;
+      }
+
+      const parentId = parentEdge.source;
+
+      /*
+        父节点没有选中，
+        或者父节点就是 root。
+
+        root 永远视为固定锚点，
+        即使 Ctrl+A 时 root 自己也被选中。
+      */
+      return (
+        !selectedSet.has(parentId) ||
+        parentId === root.id
+      );
+    }
+  );
+
+  const groups = {};
+
+  rootsToArrange.forEach((node) => {
+    const parentEdge = edges.find(
+      (edge) => edge.target === node.id
+    );
+
+    if (!parentEdge) {
+      return;
+    }
+
+    const anchorId =
+      parentEdge.source;
+
+    if (!groups[anchorId]) {
+      groups[anchorId] = [];
+    }
+
+    groups[anchorId].push(node.id);
+  });
+
+  Object.entries(groups).forEach(
+    ([anchorId, childIds]) => {
+      const anchor =
+        nodeMap[anchorId];
+
+      if (!anchor) {
+        return;
+      }
+
+      /*
+        根据当前节点相对于锚点的位置，
+        找出这个分支原本的大致方向。
+      */
+
+      let dx = 0;
+      let dy = 0;
+
+      childIds.forEach((childId) => {
+        const node =
+          nodeMap[childId];
+
+        dx +=
+          node.position.x -
+          anchor.position.x;
+
+        dy +=
+          node.position.y -
+          anchor.position.y;
+      });
+
+      /*
+        如果刚好互相抵消，
+        就使用第一个节点原来的方向。
+      */
+      if (
+        Math.abs(dx) < 0.001 &&
+        Math.abs(dy) < 0.001
+      ) {
+        const firstNode =
+          nodeMap[childIds[0]];
+
+        dx =
+          firstNode.position.x -
+          anchor.position.x;
+
+        dy =
+          firstNode.position.y -
+          anchor.position.y;
+      }
+
+      let direction = Math.atan2(
+        dy,
+        dx
+      );
+
+      /*
+        如果真的完全没有方向，
+        默认向右。
+      */
+      if (
+        Math.abs(dx) < 0.001 &&
+        Math.abs(dy) < 0.001
+      ) {
+        direction = 0;
+      }
+
+      placeChildren(
+        {
+          x: anchor.position.x,
+          y: anchor.position.y,
+        },
+        direction,
+        childIds
+      );
+    }
+  );
+
+  /*
+    root 永远保持原位。
+  */
+  newPositions[root.id] = {
+    x: root.position.x,
+    y: root.position.y,
+  };
+
+  return newPositions;
+}
 /* =========================
    登录 / 注册
 ========================= */
@@ -735,7 +1260,10 @@ const fileInputRef = useRef(null);
 const [imageTargetNode, setImageTargetNode] =
   useState(null);
   const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
+const [loading, setLoading] = useState(true);
+const [isArranging, setIsArranging] = useState(false);
+
+const arrangeTimerRef = useRef(null);
 
   useEffect(() => {
   const loadMindMap = async () => {
@@ -981,74 +1509,52 @@ useEffect(() => {
 
 const autoArrange = () => {
   if (!canEdit) return;
-  if (!nodes.length) return;
 
-  const root = nodes.find(
-    (node) => node.id === "root"
+  if (selectedNodes.length === 0) {
+    setDialog({
+      type: "message",
+      title: "无法排列",
+      message: "请先选择要排列的节点。可以使用 Ctrl + A 全选。",
+    });
+    return;
+  }
+
+  const newPositions = arrangeMindMap(
+    nodes,
+    edges,
+    selectedNodes
   );
 
-  if (!root) return;
+  if (
+    !newPositions ||
+    Object.keys(newPositions).length === 0
+  ) {
+    return;
+  }
 
-  const childrenMap = {};
-
-  nodes.forEach((node) => {
-    childrenMap[node.id] = [];
-  });
-
-  edges.forEach((edge) => {
-    if (childrenMap[edge.source]) {
-      childrenMap[edge.source].push(edge.target);
-    }
-  });
-
-  const newPositions = {};
-
-  const horizontalGap = 300;
-  const verticalGap = 110;
-
-  let leafIndex = 0;
-
-  const layout = (nodeId, depth) => {
-    const children = childrenMap[nodeId] || [];
-
-    // 叶子节点
-    if (children.length === 0) {
-      newPositions[nodeId] = {
-        x: depth * horizontalGap,
-        y: leafIndex * verticalGap,
-      };
-
-      leafIndex += 1;
-
-      return newPositions[nodeId].y;
-    }
-
-    // 先排列所有子节点
-    const childYs = children.map((childId) =>
-      layout(childId, depth + 1)
-    );
-
-    // 父节点放在所有子节点中间
-    const minY = Math.min(...childYs);
-    const maxY = Math.max(...childYs);
-
-    newPositions[nodeId] = {
-      x: depth * horizontalGap,
-      y: (minY + maxY) / 2,
-    };
-
-    return newPositions[nodeId].y;
-  };
-
-  layout(root.id, 0);
+  setIsArranging(true);
 
   setNodes((nds) =>
-    nds.map((node) => ({
-      ...node,
-      position:
-        newPositions[node.id] || node.position,
-    }))
+    nds.map((node) => {
+      const nextPosition =
+        newPositions[node.id];
+
+      if (!nextPosition) {
+        return node;
+      }
+
+      return {
+        ...node,
+        position: nextPosition,
+      };
+    })
   );
+
+  clearTimeout(arrangeTimerRef.current);
+
+  arrangeTimerRef.current = setTimeout(() => {
+    setIsArranging(false);
+  }, 450);
 };
 
   const onConnect = useCallback(
@@ -1202,9 +1708,11 @@ const autoArrange = () => {
   ========================= */
 
   const startEditing = (nodeId, value) => {
-    setEditingNode(nodeId);
-    setEditingValue(value);
-  };
+  if (!canEdit) return;
+
+  setEditingNode(nodeId);
+  setEditingValue(value);
+};
 
   const finishEditing = () => {
   if (!canEdit) return;
@@ -1338,7 +1846,7 @@ const deleteSelectedNodes = () => {
   });
 };
 
-  const changeColor = (nodeId) => {
+const changeColor = (nodeId) => {
   if (!canEdit) return;
 
   const node = nodes.find(
@@ -1347,15 +1855,24 @@ const deleteSelectedNodes = () => {
 
   if (!node) return;
 
+  const currentColor =
+    node.data.color || "#ffffff";
+
+  const { h, s, v } =
+    hexToHsv(currentColor);
+
   setDialog({
-    type: "input",
+    type: "color",
     title: "修改节点颜色",
-    value: node.data.color || "#ffffff",
-    placeholder: "#FFE4E1",
+    value: currentColor,
+    hue: h,
+    saturation: s,
+    brightness: v,
+
     onConfirm: (color) => {
       setDialog(null);
 
-      if (!color.trim()) return;
+      if (!color) return;
 
       setNodes((nds) =>
         nds.map((item) =>
@@ -1364,7 +1881,7 @@ const deleteSelectedNodes = () => {
                 ...item,
                 data: {
                   ...item.data,
-                  color: color.trim(),
+                  color,
                 },
               }
             : item
@@ -1373,6 +1890,75 @@ const deleteSelectedNodes = () => {
 
       setContextMenu(null);
     },
+  });
+};
+const updateColorSquare = (event) => {
+  const rect =
+    event.currentTarget.getBoundingClientRect();
+
+  const x =
+    (event.clientX - rect.left) /
+    rect.width;
+
+  const y =
+    (event.clientY - rect.top) /
+    rect.height;
+
+  const saturation = Math.max(
+    0,
+    Math.min(1, x)
+  );
+
+  const brightness = Math.max(
+    0,
+    Math.min(1, 1 - y)
+  );
+
+  setDialog((current) => {
+    if (!current) return current;
+
+    const color = hsvToHex(
+      current.hue || 0,
+      saturation,
+      brightness
+    );
+
+    return {
+      ...current,
+      saturation,
+      brightness,
+      value: color,
+    };
+  });
+};
+
+const updateHueSlider = (event) => {
+  const rect =
+    event.currentTarget.getBoundingClientRect();
+
+  const x =
+    (event.clientX - rect.left) /
+    rect.width;
+
+  const hue = Math.max(
+    0,
+    Math.min(1, x)
+  ) * 360;
+
+  setDialog((current) => {
+    if (!current) return current;
+
+    const color = hsvToHex(
+      hue,
+      current.saturation || 0,
+      current.brightness ?? 1
+    );
+
+    return {
+      ...current,
+      hue,
+      value: color,
+    };
   });
 };
 const uploadImage = async (nodeId, file) => {
@@ -1494,6 +2080,33 @@ const uploadImage = async (nodeId, file) => {
       ) {
         return;
       }
+
+ if (
+  event.ctrlKey &&
+  event.key.toLowerCase() === "a"
+) {
+  if (!canEdit) {
+    return;
+  }
+
+  event.preventDefault();
+
+  const allIds = nodes.map(
+    (node) => node.id
+  );
+
+  setSelectedNodes(allIds);
+  setSelectedNode(null);
+
+  setNodes((nds) =>
+    nds.map((node) => ({
+      ...node,
+      selected: true,
+    }))
+  );
+
+  return;
+}
 if (event.ctrlKey && event.key.toLowerCase() === "z") {
   event.preventDefault();
 
@@ -1575,11 +2188,12 @@ if (event.ctrlKey && event.key.toLowerCase() === "z") {
   ========================= */
 
   const handleNodeContextMenu = (event, node) => {
-    event.preventDefault();
+  event.preventDefault();
 
-    setSelectedNode(node.id);
+  setSelectedNode(node.id);
+  setSelectedNodes([node.id]);
 
-    setContextMenu({
+  setContextMenu({
       x: event.clientX,
       y: event.clientY,
       nodeId: node.id,
@@ -1722,10 +2336,10 @@ return (
             onClick={() => {
               if (!selectedNode) {
   setDialog({
-    type: "message",
-    title: "无法添加图片",
-    message: "请先选择一个节点。",
-  });
+  type: "message",
+  title: "无法添加节点",
+  message: "请先选择一个节点。",
+});
   return;
               }
 
@@ -1798,6 +2412,7 @@ return (
 <button
   className="tool-button"
   onClick={autoArrange}
+  disabled={isArranging}
   title="自动排列"
 >
   <span>↗</span>
@@ -1939,11 +2554,21 @@ nodesDraggable={canEdit}
 nodesConnectable={canEdit}
             nodes={nodes.map((node) => {
   if (editingNode !== node.id) {
-    return node;
+    if (!isArranging) {
+      return node;
+    }
+
+    return {
+      ...node,
+      className: "mind-node-arranging",
+    };
   }
 
   return {
     ...node,
+    className: isArranging
+      ? "mind-node-arranging"
+      : "",
     data: {
       ...node.data,
       label: (
@@ -1979,7 +2604,6 @@ onNodesChange={onNodesChange}
             nodeTypes={nodeTypes}
             onNodeClick={(_, node) => {
   setSelectedNode(node.id);
-  setSelectedNodes([node.id]);
   setContextMenu(null);
 }}
             onNodeDoubleClick={(_, node) => {
@@ -1989,19 +2613,32 @@ onNodesChange={onNodesChange}
               );
             }}
             onNodeContextMenu={handleNodeContextMenu}
-           onSelectionChange={({ nodes }) => {
-  const ids = nodes.map((node) => node.id);
+           onSelectionChange={({ nodes: selectedReactNodes }) => {
+  const ids = selectedReactNodes.map(
+    (node) => node.id
+  );
 
   setSelectedNodes((current) => {
     if (
       current.length === ids.length &&
-      current.every((id, index) => id === ids[index])
+      current.every(
+        (id, index) => id === ids[index]
+      )
     ) {
       return current;
     }
 
     return ids;
   });
+
+  /*
+    只有单选时才存在“当前节点”。
+    多选时 selectedNode 清空，
+    防止“编辑节点 / 添加节点”误操作某一个节点。
+  */
+  setSelectedNode(
+    ids.length === 1 ? ids[0] : null
+  );
 }}
             onPaneClick={() => {
   setSelectedNode(null);
@@ -2110,7 +2747,11 @@ onNodesChange={onNodesChange}
 {dialog && (
   <div className="app-dialog-overlay">
     <div
-      className="app-dialog"
+      className={`app-dialog ${
+        dialog.type === "color"
+          ? "app-dialog-color"
+          : ""
+      }`}
       onClick={(event) =>
         event.stopPropagation()
       }
@@ -2126,16 +2767,181 @@ onNodesChange={onNodesChange}
       </div>
 
       <div className="app-dialog-body">
-        {dialog.type === "input" ? (
+        {dialog.type === "color" ? (
+          <div className="color-picker">
+            <div
+              className="color-picker-square"
+              style={{
+                backgroundColor: `hsl(${
+                  dialog.hue || 0
+                }, 100%, 50%)`,
+              }}
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(
+                  event.pointerId
+                );
+                updateColorSquare(event);
+              }}
+              onPointerMove={(event) => {
+                if (
+                  event.currentTarget.hasPointerCapture(
+                    event.pointerId
+                  )
+                ) {
+                  updateColorSquare(event);
+                }
+              }}
+              onPointerUp={(event) => {
+                if (
+                  event.currentTarget.hasPointerCapture(
+                    event.pointerId
+                  )
+                ) {
+                  event.currentTarget.releasePointerCapture(
+                    event.pointerId
+                  );
+                }
+              }}
+            >
+              <div className="color-picker-white" />
+              <div className="color-picker-black" />
+
+              <div
+                className="color-picker-handle"
+                style={{
+                  left: `${
+                    (dialog.saturation || 0) *
+                    100
+                  }%`,
+                  top: `${
+                    (1 -
+                      (dialog.brightness ??
+                        1)) *
+                    100
+                  }%`,
+                }}
+              />
+            </div>
+
+            <div
+              className="color-picker-hue"
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(
+                  event.pointerId
+                );
+                updateHueSlider(event);
+              }}
+              onPointerMove={(event) => {
+                if (
+                  event.currentTarget.hasPointerCapture(
+                    event.pointerId
+                  )
+                ) {
+                  updateHueSlider(event);
+                }
+              }}
+              onPointerUp={(event) => {
+                if (
+                  event.currentTarget.hasPointerCapture(
+                    event.pointerId
+                  )
+                ) {
+                  event.currentTarget.releasePointerCapture(
+                    event.pointerId
+                  );
+                }
+              }}
+            >
+              <div
+                className="color-picker-hue-handle"
+                style={{
+                  left: `${
+                    ((dialog.hue || 0) /
+                      360) *
+                    100
+                  }%`,
+                }}
+              />
+            </div>
+
+            <div className="color-picker-current">
+              <div
+                className="color-picker-preview"
+                style={{
+                  background:
+                    dialog.value ||
+                    "#ffffff",
+                }}
+              />
+
+              <span>
+                {(
+                  dialog.value ||
+                  "#ffffff"
+                ).toUpperCase()}
+              </span>
+            </div>
+
+            <div className="color-picker-label">
+              快速颜色
+            </div>
+
+            <div className="color-picker-presets">
+              {COLOR_PRESETS.map(
+                (color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    className={`color-preset ${
+                      dialog.value?.toLowerCase() ===
+                      color.toLowerCase()
+                        ? "active"
+                        : ""
+                    }`}
+                    style={{
+                      backgroundColor:
+                        color,
+                    }}
+                    onClick={() => {
+                      const {
+                        h,
+                        s,
+                        v,
+                      } = hexToHsv(
+                        color
+                      );
+
+                      setDialog(
+                        (current) => ({
+                          ...current,
+                          value: color,
+                          hue: h,
+                          saturation:
+                            s,
+                          brightness:
+                            v,
+                        })
+                      );
+                    }}
+                    title={color}
+                  />
+                )
+              )}
+            </div>
+          </div>
+        ) : dialog.type === "input" ? (
           <input
             className="app-dialog-input"
             autoFocus
             value={dialog.value || ""}
-            placeholder={dialog.placeholder || ""}
+            placeholder={
+              dialog.placeholder || ""
+            }
             onChange={(event) =>
               setDialog((current) => ({
                 ...current,
-                value: event.target.value,
+                value:
+                  event.target.value,
               }))
             }
             onKeyDown={(event) => {
@@ -2149,7 +2955,9 @@ onNodesChange={onNodesChange}
                 }
               }
 
-              if (event.key === "Escape") {
+              if (
+                event.key === "Escape"
+              ) {
                 setDialog(null);
               }
             }}
@@ -2160,10 +2968,14 @@ onNodesChange={onNodesChange}
       </div>
 
       <div className="app-dialog-actions">
-        {dialog.type === "confirm" && (
+        {(dialog.type === "confirm" ||
+          dialog.type === "input" ||
+          dialog.type === "color") && (
           <button
             className="app-dialog-cancel"
-            onClick={() => setDialog(null)}
+            onClick={() =>
+              setDialog(null)
+            }
           >
             取消
           </button>
