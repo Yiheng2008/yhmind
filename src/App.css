@@ -769,3 +769,20 @@ button {
 .dashboard-heading h1 {
   color: #222222;
 }
+
+.layout-handle {
+  width: 1px !important;
+  height: 1px !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  border: none !important;
+}
+
+/* 自动排列时平滑移动 */
+.react-flow__node.mind-node-arranging {
+  transition:
+    transform 450ms
+      cubic-bezier(0.22, 1, 0.36, 1);
+
+  will-change: transform;
+}

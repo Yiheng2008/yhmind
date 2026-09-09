@@ -37,21 +37,85 @@ const supabase = createClient(
 function MindNode({ data, selected }) {
   return (
     <div
-      className={`mind-node ${selected ? "selected" : ""}`}
+      className={`mind-node ${
+        selected ? "selected" : ""
+      }`}
       style={{
-        backgroundColor: data.color || "#ffffff",
+        backgroundColor:
+          data.color || "#ffffff",
       }}
     >
-      <Handle type="target" position={Position.Left} />
+      {/* 正常手动连接用的可见连接点 */}
+      <Handle
+        id="target-left"
+        type="target"
+        position={Position.Left}
+      />
+
+      <Handle
+        id="source-right"
+        type="source"
+        position={Position.Right}
+      />
+
+      {/* 排列系统使用的隐藏连接点 */}
+      <Handle
+        id="target-top"
+        type="target"
+        position={Position.Top}
+        className="layout-handle"
+      />
+
+      <Handle
+        id="target-right"
+        type="target"
+        position={Position.Right}
+        className="layout-handle"
+      />
+
+      <Handle
+        id="target-bottom"
+        type="target"
+        position={Position.Bottom}
+        className="layout-handle"
+      />
+
+      <Handle
+        id="source-top"
+        type="source"
+        position={Position.Top}
+        className="layout-handle"
+      />
+
+      <Handle
+        id="source-bottom"
+        type="source"
+        position={Position.Bottom}
+        className="layout-handle"
+      />
+
+      <Handle
+        id="source-left"
+        type="source"
+        position={Position.Left}
+        className="layout-handle"
+      />
+
+      <Handle
+        id="source-right-layout"
+        type="source"
+        position={Position.Right}
+        className="layout-handle"
+      />
 
       <div className="node-content">
         {data.imageUrl && (
-  <img
-    className="node-image"
-    src={data.imageUrl}
-    alt=""
-  />
-)}
+          <img
+            className="node-image"
+            src={data.imageUrl}
+            alt=""
+          />
+        )}
 
         {data.emoji && (
           <span className="node-emoji">
@@ -61,8 +125,6 @@ function MindNode({ data, selected }) {
 
         <span>{data.label}</span>
       </div>
-
-      <Handle type="source" position={Position.Right} />
     </div>
   );
 }
@@ -84,6 +146,40 @@ const defaultNodes = [
 ];
 
 const defaultEdges = [];
+
+function getNearestSide(dx, dy) {
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return dx >= 0 ? "right" : "left";
+  }
+
+  return dy >= 0 ? "bottom" : "top";
+}
+
+function getEdgeHandles(sourcePosition, targetPosition) {
+  const dx = targetPosition.x - sourcePosition.x;
+  const dy = targetPosition.y - sourcePosition.y;
+
+  const side = getNearestSide(dx, dy);
+
+  const opposite = {
+    right: "left",
+    left: "right",
+    top: "bottom",
+    bottom: "top",
+  };
+
+  const sourceHandle =
+    side === "right"
+      ? "source-right-layout"
+      : `source-${side}`;
+
+  const targetHandle = `target-${opposite[side]}`;
+
+  return {
+    sourceHandle,
+    targetHandle,
+  };
+}
 
 function getDisplayName(user) {
   return (
@@ -222,338 +318,433 @@ function hsvToHex(h, s, v) {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
-function arrangeMindMap(nodes, edges, selectedIds) {
-  const selectedSet = new Set(selectedIds);
+function arrangeMindMap(nodes, edges, selectedNodeIds) {
+  const HORIZONTAL_GAP = 55;
+  const VERTICAL_GAP = 200;
 
-  if (!nodes.length || selectedSet.size === 0) {
+  if (!nodes.length || !edges.length) {
     return {};
   }
 
-  const root = nodes.find(
-    (node) => node.id === "root"
+  const selectedSet = new Set(selectedNodeIds);
+
+  const nodeMap = new Map(
+    nodes.map((node) => [node.id, node])
   );
+
+  const childrenMap = new Map();
+
+  nodes.forEach((node) => {
+    childrenMap.set(node.id, []);
+  });
+
+  edges.forEach((edge) => {
+    if (!childrenMap.has(edge.source)) {
+      childrenMap.set(edge.source, []);
+    }
+
+    childrenMap.get(edge.source).push(edge.target);
+  });
+
+  const getNodeSize = (node) => {
+    const width =
+      node.measured?.width ??
+      node.width ??
+      180;
+
+    const height =
+      node.measured?.height ??
+      node.height ??
+      70;
+
+    return {
+      width,
+      height,
+    };
+  };
+
+  const getChildren = (nodeId) => {
+    return (childrenMap.get(nodeId) || []).filter(
+      (id) =>
+        selectedSet.has(id) &&
+        nodeMap.has(id)
+    );
+  };
+
+  const root =
+    nodeMap.get("root") ||
+    nodes.find((node) => {
+      return !edges.some(
+        (edge) => edge.target === node.id
+      );
+    });
 
   if (!root) {
     return {};
   }
 
-  const nodeMap = Object.fromEntries(
-    nodes.map((node) => [node.id, node])
-  );
+  const newPositions = {};
 
-  const childrenMap = {};
+  /*
+   * --------------------------------------------------
+   * 1. 普通递归布局
+   * --------------------------------------------------
+   *
+   * 每个节点的孩子只根据：
+   *
+   *   当前节点的位置
+   *   + 孩子自身高度
+   *   + VERTICAL_GAP
+   *
+   * 来排列。
+   *
+   * 不计算整个 subtree 的高度。
+   */
 
-  nodes.forEach((node) => {
-    childrenMap[node.id] = [];
-  });
-
-  edges.forEach((edge) => {
-    if (childrenMap[edge.source]) {
-      childrenMap[edge.source].push(edge.target);
-    }
-  });
-
-  const positions = {
-    [root.id]: {
-      x: root.position.x,
-      y: root.position.y,
-    },
-  };
-
-  const DEPTH_GAP = 250;
-  const SIBLING_GAP = 105;
-
-  const getSelectedChildren = (nodeId) =>
-    (childrenMap[nodeId] || []).filter(
-      (childId) => selectedSet.has(childId)
-    );
-
-  const placeBranch = (
-    parentPosition,
+  const layoutBranch = (
+    parentId,
     direction,
-    children
+    parentX,
+    parentCenterY
   ) => {
-    if (!children.length) return;
+    const children = getChildren(parentId);
 
-    const perpendicular = {
-      x: -Math.sin(direction),
-      y: Math.cos(direction),
-    };
+    if (!children.length) {
+      return;
+    }
 
-    /*
-      保留兄弟节点原有的相对顺序，
-      只把它们重新拉成规则间距。
-    */
-    const orderedChildren = [...children].sort(
-      (a, b) => {
-        const nodeA = nodeMap[a];
-        const nodeB = nodeMap[b];
-
-        const offsetA =
-          (nodeA.position.x - parentPosition.x) *
-            perpendicular.x +
-          (nodeA.position.y - parentPosition.y) *
-            perpendicular.y;
-
-        const offsetB =
-          (nodeB.position.x - parentPosition.x) *
-            perpendicular.x +
-          (nodeB.position.y - parentPosition.y) *
-            perpendicular.y;
-
-        return offsetA - offsetB;
-      }
+    const childSizes = children.map((id) =>
+      getNodeSize(nodeMap.get(id))
     );
 
-    const center =
-      (orderedChildren.length - 1) / 2;
+    const totalHeight =
+      childSizes.reduce(
+        (sum, size) => sum + size.height,
+        0
+      ) +
+      VERTICAL_GAP *
+        Math.max(0, children.length - 1);
 
-    orderedChildren.forEach(
-      (childId, index) => {
-        const offset =
-          (index - center) * SIBLING_GAP;
+    let currentY =
+      parentCenterY - totalHeight / 2;
 
-        const childPosition = {
-          x:
-            parentPosition.x +
-            Math.cos(direction) * DEPTH_GAP +
-            perpendicular.x * offset,
+    children.forEach((childId, index) => {
+      const child = nodeMap.get(childId);
+      const size = childSizes[index];
 
-          y:
-            parentPosition.y +
-            Math.sin(direction) * DEPTH_GAP +
-            perpendicular.y * offset,
-        };
+      const childCenterY =
+        currentY + size.height / 2;
 
-        positions[childId] = childPosition;
+      const childX =
+        direction === "right"
+          ? parentX +
+            getNodeSize(
+              nodeMap.get(parentId)
+            ).width +
+            HORIZONTAL_GAP
+          : parentX -
+            HORIZONTAL_GAP -
+            size.width;
 
-        placeBranch(
-          childPosition,
-          direction,
-          getSelectedChildren(childId)
-        );
-      }
-    );
+      newPositions[childId] = {
+        x: childX,
+        y:
+          childCenterY -
+          size.height / 2,
+      };
+
+      currentY +=
+        size.height + VERTICAL_GAP;
+
+      /*
+       * 注意：
+       * 这里继续排这个孩子的孩子，
+       * 但绝对不会重新修改这个孩子的位置。
+       */
+      layoutBranch(
+        childId,
+        direction,
+        childX,
+        childCenterY
+      );
+    });
   };
 
   /*
-    整张图：
-    第一层严格均分 360°。
-  */
-  const wholeMapSelected = nodes.every(
-    (node) =>
-      node.id === "root" ||
-      selectedSet.has(node.id)
-  );
+   * --------------------------------------------------
+   * 2. 根节点
+   * --------------------------------------------------
+   */
 
-  if (wholeMapSelected) {
-    const rootChildren =
-      childrenMap[root.id] || [];
-
-    if (!rootChildren.length) {
-      return positions;
-    }
-
-    const angleStep =
-      (Math.PI * 2) /
-      rootChildren.length;
-
-    /*
-      让第一个分支从正右方开始：
-
-      2 → 右 / 左
-      3 → 右 / 左下 / 左上
-      4 → 右 / 下 / 左 / 上
-    */
-    rootChildren.forEach(
-      (childId, index) => {
-        const direction =
-          index * angleStep;
-
-        const childPosition = {
-          x:
-            root.position.x +
-            Math.cos(direction) * DEPTH_GAP,
-
-          y:
-            root.position.y +
-            Math.sin(direction) * DEPTH_GAP,
-        };
-
-        positions[childId] = childPosition;
-
-        placeBranch(
-          childPosition,
-          direction,
-          getSelectedChildren(childId)
-        );
-      }
-    );
-
-    positions[root.id] = {
-      x: root.position.x,
-      y: root.position.y,
+  const rootPosition =
+    root.position || {
+      x: 0,
+      y: 0,
     };
 
-    return positions;
+  const rootSize = getNodeSize(root);
+
+  newPositions[root.id] = {
+    x: rootPosition.x,
+    y: rootPosition.y,
+  };
+
+  const rootCenterY =
+    rootPosition.y +
+    rootSize.height / 2;
+
+  const rootChildren = getChildren(root.id);
+
+  /*
+   * --------------------------------------------------
+   * 3. 根节点左右分支
+   * --------------------------------------------------
+   */
+
+  const leftChildren = [];
+  const rightChildren = [];
+
+  rootChildren.forEach((childId) => {
+    const child = nodeMap.get(childId);
+
+    const originalX =
+      child?.position?.x ??
+      rootPosition.x;
+
+    if (
+      originalX <
+      rootPosition.x +
+        rootSize.width / 2
+    ) {
+      leftChildren.push(childId);
+    } else {
+      rightChildren.push(childId);
+    }
+  });
+
+  /*
+   * 如果没有明显左右关系，
+   * 默认平均分到左右两边。
+   */
+
+  if (
+    leftChildren.length === 0 &&
+    rightChildren.length > 1
+  ) {
+    const half =
+      Math.ceil(rightChildren.length / 2);
+
+    const movedLeft =
+      rightChildren.splice(
+        0,
+        half
+      );
+
+    leftChildren.push(...movedLeft);
   }
 
   /*
-    局部排列：
-    找到选中区域最顶层节点。
-    它的父节点是锚点，锚点不移动。
-  */
-  const localRoots = nodes.filter(
-    (node) => {
-      if (
-        node.id === "root" ||
-        !selectedSet.has(node.id)
-      ) {
-        return false;
+   * --------------------------------------------------
+   * 4. 根节点左侧
+   * --------------------------------------------------
+   */
+
+  const layoutRootSide = (
+    children,
+    direction
+  ) => {
+    if (!children.length) {
+      return;
+    }
+
+    const sizes = children.map((id) =>
+      getNodeSize(nodeMap.get(id))
+    );
+
+    const totalHeight =
+      sizes.reduce(
+        (sum, size) =>
+          sum + size.height,
+        0
+      ) +
+      VERTICAL_GAP *
+        Math.max(0, children.length - 1);
+
+    let currentY =
+      rootCenterY -
+      totalHeight / 2;
+
+    children.forEach((childId, index) => {
+      const child = nodeMap.get(childId);
+      const size = sizes[index];
+
+      const childCenterY =
+        currentY + size.height / 2;
+
+      let childX;
+
+      if (direction === "right") {
+        childX =
+          rootPosition.x +
+          rootSize.width +
+          HORIZONTAL_GAP;
+      } else {
+        childX =
+          rootPosition.x -
+          HORIZONTAL_GAP -
+          size.width;
       }
 
+      newPositions[childId] = {
+        x: childX,
+        y:
+          childCenterY -
+          size.height / 2,
+      };
+
+      /*
+       * 后面的层级从这里继续，
+       * 但不会影响当前 childCenterY。
+       */
+      layoutBranch(
+        childId,
+        direction,
+        childX,
+        childCenterY
+      );
+
+      currentY +=
+        size.height +
+        VERTICAL_GAP;
+    });
+  };
+
+  layoutRootSide(
+    leftChildren,
+    "left"
+  );
+
+  layoutRootSide(
+    rightChildren,
+    "right"
+  );
+
+  /*
+   * --------------------------------------------------
+   * 5. 如果是局部选中布局
+   * --------------------------------------------------
+   */
+
+  const selectedWithoutRoot =
+    nodes.filter(
+      (node) =>
+        selectedSet.has(node.id) &&
+        node.id !== root.id
+    );
+
+  if (
+    selectedWithoutRoot.length &&
+    !selectedSet.has(root.id)
+  ) {
+    const selectedRoots =
+      selectedWithoutRoot.filter(
+        (node) => {
+          const parentEdge =
+            edges.find(
+              (edge) =>
+                edge.target === node.id
+            );
+
+          return (
+            !parentEdge ||
+            !selectedSet.has(
+              parentEdge.source
+            )
+          );
+        }
+      );
+
+    selectedRoots.forEach((node, index) => {
       const parentEdge =
         edges.find(
-          (edge) => edge.target === node.id
+          (edge) =>
+            edge.target === node.id
         );
 
       if (!parentEdge) {
-        return false;
-      }
-
-      return !selectedSet.has(
-        parentEdge.source
-      );
-    }
-  );
-
-  const groups = {};
-
-  localRoots.forEach((node) => {
-    const parentEdge =
-      edges.find(
-        (edge) => edge.target === node.id
-      );
-
-    if (!parentEdge) return;
-
-    const anchorId =
-      parentEdge.source;
-
-    if (!groups[anchorId]) {
-      groups[anchorId] = [];
-    }
-
-    groups[anchorId].push(node.id);
-  });
-
-  Object.entries(groups).forEach(
-    ([anchorId, childIds]) => {
-      const anchor =
-        nodeMap[anchorId];
-
-      if (!anchor) return;
-
-      /*
-        root 下选择了多个一级分支：
-        每个分支保持原来的方向。
-      */
-      if (anchorId === root.id) {
-        childIds.forEach((childId) => {
-          const child =
-            nodeMap[childId];
-
-          let dx =
-            child.position.x -
-            root.position.x;
-
-          let dy =
-            child.position.y -
-            root.position.y;
-
-          if (
-            Math.abs(dx) < 0.001 &&
-            Math.abs(dy) < 0.001
-          ) {
-            dx = 1;
-            dy = 0;
-          }
-
-          const direction =
-            Math.atan2(dy, dx);
-
-          const childPosition = {
-            x:
-              root.position.x +
-              Math.cos(direction) * DEPTH_GAP,
-
-            y:
-              root.position.y +
-              Math.sin(direction) * DEPTH_GAP,
-          };
-
-          positions[childId] =
-            childPosition;
-
-          placeBranch(
-            childPosition,
-            direction,
-            getSelectedChildren(childId)
-          );
-        });
-
         return;
       }
 
-      /*
-        普通局部区域：
-        所有选中的顶层节点沿平均方向规则展开。
-      */
-      let dx = 0;
-      let dy = 0;
+      const parent =
+        nodeMap.get(
+          parentEdge.source
+        );
 
-      childIds.forEach((childId) => {
-        const child =
-          nodeMap[childId];
-
-        dx +=
-          child.position.x -
-          anchor.position.x;
-
-        dy +=
-          child.position.y -
-          anchor.position.y;
-      });
-
-      if (
-        Math.abs(dx) < 0.001 &&
-        Math.abs(dy) < 0.001
-      ) {
-        dx = 1;
-        dy = 0;
+      if (!parent) {
+        return;
       }
 
+      const parentPos =
+        newPositions[parent.id] ||
+        parent.position;
+
+      if (!parentPos) {
+        return;
+      }
+
+      const parentSize =
+        getNodeSize(parent);
+
+      const nodeSize =
+        getNodeSize(node);
+
       const direction =
-        Math.atan2(dy, dx);
+        node.position.x >=
+        parent.position.x
+          ? "right"
+          : "left";
 
-      placeBranch(
-        {
-          x: anchor.position.x,
-          y: anchor.position.y,
-        },
+      const centerY =
+        parentPos.y +
+        parentSize.height / 2;
+
+      const x =
+        direction === "right"
+          ? parentPos.x +
+            parentSize.width +
+            HORIZONTAL_GAP
+          : parentPos.x -
+            HORIZONTAL_GAP -
+            nodeSize.width;
+
+      const offset =
+        (index -
+          (selectedRoots.length - 1) / 2) *
+        (nodeSize.height +
+          VERTICAL_GAP);
+
+      const y =
+        centerY +
+        offset -
+        nodeSize.height / 2;
+
+      newPositions[node.id] = {
+        x,
+        y,
+      };
+
+      layoutBranch(
+        node.id,
         direction,
-        childIds
+        x,
+        y + nodeSize.height / 2
       );
-    }
-  );
+    });
+  }
 
-  positions[root.id] = {
-    x: root.position.x,
-    y: root.position.y,
-  };
-
-  return positions;
+  return newPositions;
 }
+
 /* =========================
    登录 / 注册
 ========================= */
@@ -1191,13 +1382,6 @@ const removeShare = async (shareId) => {
 
   const [edges, setEdges, onEdgesChange] =
     useEdgesState([]);
-useEffect(() => {
-  nodesRef.current = nodes;
-}, [nodes]);
-
-useEffect(() => {
-  edgesRef.current = edges;
-}, [edges]);
   const [selectedNode, setSelectedNode] = useState(null);
 const [selectedNodes, setSelectedNodes] = useState([]);
   const [editingNode, setEditingNode] = useState(null);
@@ -1235,7 +1419,8 @@ const [imageTargetNode, setImageTargetNode] =
   const cursorFrameRef = useRef(null);
   const pendingCursorRef = useRef(null);
   const arrangeTimerRef = useRef(null);
-
+const reactFlowInstanceRef =
+  useRef(null);
   useEffect(() => {
     nodesRef.current = nodes;
     edgesRef.current = edges;
@@ -1311,65 +1496,111 @@ const historyRef = useRef({
   current: null,
 });
 
-const historyTimerRef = useRef(null);
 const isRestoringHistoryRef = useRef(false);
 
-const saveHistoryPoint = (nextNodes, nextEdges) => {
-  if (isRestoringHistoryRef.current) {
-    isRestoringHistoryRef.current = false;
-    historyRef.current.current = JSON.stringify({
-      nodes: nextNodes,
-      edges: nextEdges,
-    });
-    return;
-  }
+/*
+ * 当前状态变化后，
+ * 把“变化前”的状态放进 past。
+ */
+useEffect(() => {
+  if (loading) return;
 
-  const nextSnapshot = JSON.stringify({
-    nodes: nextNodes,
-    edges: nextEdges,
+  const snapshot = JSON.stringify({
+    nodes,
+    edges,
   });
 
-  const currentSnapshot =
-    historyRef.current.current;
-
-  if (currentSnapshot === null) {
-    historyRef.current.current = nextSnapshot;
+  /*
+   * 第一次加载：
+   * 只建立初始状态，不产生历史记录。
+   */
+  if (historyRef.current.current === null) {
+    historyRef.current.current = snapshot;
     return;
   }
 
-  if (currentSnapshot === nextSnapshot) {
+  /*
+   * Undo / Redo 本身造成的状态变化
+   * 不应该再次生成历史记录。
+   */
+  if (isRestoringHistoryRef.current) {
+    isRestoringHistoryRef.current = false;
+    historyRef.current.current = snapshot;
     return;
   }
 
-  historyRef.current.past.push(currentSnapshot);
+  /*
+   * 没有实际变化
+   */
+  if (
+    historyRef.current.current === snapshot
+  ) {
+    return;
+  }
 
-  if (historyRef.current.past.length > 50) {
+  /*
+   * 把变化之前的状态保存下来
+   */
+  historyRef.current.past.push(
+    historyRef.current.current
+  );
+
+  /*
+   * 最多保存 50 步
+   */
+  if (
+    historyRef.current.past.length > 50
+  ) {
     historyRef.current.past.shift();
   }
 
-  historyRef.current.current = nextSnapshot;
+  /*
+   * 新操作发生后，
+   * redo 历史必须清空。
+   */
   historyRef.current.future = [];
-};
+
+  /*
+   * 当前状态更新
+   */
+  historyRef.current.current = snapshot;
+}, [nodes, edges, loading]);
 
 const undo = () => {
   const history = historyRef.current;
+
+  console.log(
+    "UNDO",
+    "past:",
+    history.past.length,
+    "future:",
+    history.future.length
+  );
 
   if (history.past.length === 0) {
     return;
   }
 
-  clearTimeout(historyTimerRef.current);
-
-  const previous = history.past.pop();
-
+  /*
+   * 当前状态进入 redo
+   */
   if (history.current) {
-    history.future.push(history.current);
+    history.future.push(
+      history.current
+    );
   }
+
+  /*
+   * 取出上一个状态
+   */
+  const previous =
+    history.past.pop();
 
   history.current = previous;
   isRestoringHistoryRef.current = true;
 
-  const snapshot = JSON.parse(previous);
+  const snapshot =
+    JSON.parse(previous);
 
   setNodes(snapshot.nodes);
   setEdges(snapshot.edges);
@@ -1378,67 +1609,43 @@ const undo = () => {
 const redo = () => {
   const history = historyRef.current;
 
+  console.log(
+    "REDO",
+    "past:",
+    history.past.length,
+    "future:",
+    history.future.length
+  );
+
   if (history.future.length === 0) {
     return;
   }
 
-  clearTimeout(historyTimerRef.current);
-
-  const next = history.future.pop();
-
+  /*
+   * 当前状态进入 undo
+   */
   if (history.current) {
-    history.past.push(history.current);
+    history.past.push(
+      history.current
+    );
   }
+
+  /*
+   * 取出下一个状态
+   */
+  const next =
+    history.future.pop();
 
   history.current = next;
   isRestoringHistoryRef.current = true;
 
-  const snapshot = JSON.parse(next);
+  const snapshot =
+    JSON.parse(next);
 
   setNodes(snapshot.nodes);
   setEdges(snapshot.edges);
 };
-useEffect(() => {
-  if (loading || !canEdit) return;
 
-console.log("自动保存触发", {
-  loading,
-  canEdit,
-  mindmapId: mindmap.id,
-});
-
-  const snapshot = JSON.stringify({
-    nodes,
-    edges,
-  });
-
-  if (historyRef.current.current === null) {
-    historyRef.current.current = snapshot;
-    return;
-  }
-
-  if (isRestoringHistoryRef.current) {
-    isRestoringHistoryRef.current = false;
-    historyRef.current.current = snapshot;
-    return;
-  }
-
-  if (
-    snapshot === historyRef.current.current
-  ) {
-    return;
-  }
-
-  clearTimeout(historyTimerRef.current);
-
-  historyTimerRef.current = setTimeout(() => {
-    saveHistoryPoint(nodes, edges);
-  }, 400);
-
-  return () => {
-    clearTimeout(historyTimerRef.current);
-  };
-}, [nodes, edges, loading]);
 useEffect(() => {
   if (loading || !canEdit) return;
 
@@ -1503,7 +1710,18 @@ const broadcastEdit = useCallback((event, payload) => {
       console.error("实时同步发送失败:", error);
     });
 }, [session.user.id]);
+const getNodePosition = (nodeId) => {
+  const node = nodes.find(
+    (item) => item.id === nodeId
+  );
 
+  return (
+    node?.position || {
+      x: 0,
+      y: 0,
+    }
+  );
+};
 const autoArrange = () => {
   if (!canEdit) return;
 
@@ -1517,21 +1735,30 @@ const autoArrange = () => {
     return;
   }
 
-  const newPositions = arrangeMindMap(
-    nodes,
-    edges,
-    selectedNodes
-  );
+  const newPositions =
+    arrangeMindMap(
+      nodes,
+      edges,
+      selectedNodes
+    );
 
-  if (Object.keys(newPositions).length === 0) {
+  if (
+    Object.keys(newPositions)
+      .length === 0
+  ) {
     return;
   }
 
   setIsArranging(true);
 
+  /*
+    更新节点位置
+  */
+
   setNodes((nds) =>
     nds.map((node) => {
-      const position = newPositions[node.id];
+      const position =
+        newPositions[node.id];
 
       if (!position) {
         return node;
@@ -1540,35 +1767,148 @@ const autoArrange = () => {
       return {
         ...node,
         position,
-        className: "mind-node-arranging",
+        className:
+          "mind-node-arranging",
       };
     })
   );
 
-  setEdges((eds) =>
-    eds.map((edge) => ({
-      ...edge,
-      type: "straight",
-    }))
+  /*
+    根据排列后的位置
+    自动决定连接方向。
+  */
+
+ const arrangedEdges = edges.map((edge) => {
+  const sourceNode = nodes.find(
+    (node) => node.id === edge.source
   );
 
-  broadcastEdit("arrange", {
-    positions: newPositions,
-    edgeType: "straight",
-  });
+  const targetNode = nodes.find(
+    (node) => node.id === edge.target
+  );
 
-  clearTimeout(arrangeTimerRef.current);
+  if (!sourceNode || !targetNode) {
+    return {
+      ...edge,
+      type: "smoothstep",
+    };
+  }
 
-  arrangeTimerRef.current = setTimeout(() => {
-    setIsArranging(false);
+  const sourcePosition =
+    newPositions[edge.source] ||
+    sourceNode.position;
 
-    setNodes((nds) =>
-      nds.map((node) => ({
-        ...node,
-        className: "",
-      }))
-    );
-  }, 450);
+  const targetPosition =
+    newPositions[edge.target] ||
+    targetNode.position;
+
+  const sourceSize = {
+    width:
+      sourceNode.measured?.width ??
+      sourceNode.width ??
+      180,
+    height:
+      sourceNode.measured?.height ??
+      sourceNode.height ??
+      70,
+  };
+
+  const targetSize = {
+    width:
+      targetNode.measured?.width ??
+      targetNode.width ??
+      180,
+    height:
+      targetNode.measured?.height ??
+      targetNode.height ??
+      70,
+  };
+
+  const sourceCenterX =
+    sourcePosition.x +
+    sourceSize.width / 2;
+
+  const targetCenterX =
+    targetPosition.x +
+    targetSize.width / 2;
+
+  const sourceCenterY =
+    sourcePosition.y +
+    sourceSize.height / 2;
+
+  const targetCenterY =
+    targetPosition.y +
+    targetSize.height / 2;
+
+  /*
+   * 思维导图默认左右连接。
+   * 只有真正上下排列时才使用上下 Handle。
+   */
+  if (
+    Math.abs(targetCenterX - sourceCenterX) >=
+    Math.abs(targetCenterY - sourceCenterY)
+  ) {
+    if (targetCenterX > sourceCenterX) {
+      return {
+        ...edge,
+        type: "smoothstep",
+        sourceHandle: "source-right-layout",
+        targetHandle: "target-left",
+      };
+    }
+
+    return {
+      ...edge,
+      type: "smoothstep",
+      sourceHandle: "source-left",
+      targetHandle: "target-right",
+    };
+  }
+
+  if (targetCenterY > sourceCenterY) {
+    return {
+      ...edge,
+      type: "smoothstep",
+      sourceHandle: "source-bottom",
+      targetHandle: "target-top",
+    };
+  }
+
+  return {
+    ...edge,
+    type: "smoothstep",
+    sourceHandle: "source-top",
+    targetHandle: "target-bottom",
+  };
+});
+
+setEdges(arrangedEdges);
+
+  /*
+    广播给其他协作者。
+  */
+
+ broadcastEdit("arrange", {
+  positions: newPositions,
+  edges: arrangedEdges,
+  edgeType: "straight",
+});
+
+  clearTimeout(
+    arrangeTimerRef.current
+  );
+
+  arrangeTimerRef.current =
+    setTimeout(() => {
+      setIsArranging(false);
+
+      setNodes((nds) =>
+        nds.map((node) => ({
+          ...node,
+          className: "",
+        }))
+      );
+    }, 500);
 };
 
   const onConnect = useCallback(
@@ -1577,7 +1917,7 @@ const autoArrange = () => {
 
       const edge = {
         ...params,
-        type: "straight",
+        type: "smoothstep",
         id: params.id || `edge-${Date.now()}`,
       };
 
@@ -1633,7 +1973,7 @@ const autoArrange = () => {
       id: `edge-${parentId}-${newId}`,
       source: parentId,
       target: newId,
-      type: "straight",
+      type: "smoothstep",
     };
 
     setEdges((eds) => [
@@ -1713,7 +2053,7 @@ const autoArrange = () => {
       id: `edge-${parentId}-${newId}`,
       source: parentId,
       target: newId,
-      type: "straight",
+      type: "smoothstep",
     };
 
     setEdges((eds) => [
@@ -2249,47 +2589,66 @@ const uploadImage = async (nodeId, file) => {
         );
       }
 
-      if (event === "arrange") {
-        const positions = payload.positions || {};
+if (event === "arrange") {
+  const positions =
+    payload.positions || {};
 
-        setIsArranging(true);
+  applyingRemoteRef.current = true;
 
-        setNodes((nds) =>
-          nds.map((node) => {
-            const position = positions[node.id];
+  setNodes((currentNodes) =>
+    currentNodes.map((node) => {
+      const position =
+        positions[node.id];
 
-            if (!position) return node;
+      if (!position) {
+        return node;
+      }
 
-            return {
-              ...node,
-              position,
-              className: "mind-node-arranging",
-            };
-          })
-        );
+      return {
+        ...node,
+        position,
+        className:
+          "mind-node mind-node-arranging",
+      };
+    })
+  );
 
-        if (payload.edgeType) {
-          setEdges((eds) =>
-            eds.map((edge) => ({
-              ...edge,
-              type: payload.edgeType,
-            }))
+  if (Array.isArray(payload.edges)) {
+    setEdges((currentEdges) =>
+      currentEdges.map((edge) => {
+        const remoteEdge =
+          payload.edges.find(
+            (item) =>
+              item.id === edge.id
           );
+
+        if (!remoteEdge) {
+          return edge;
         }
 
-        clearTimeout(arrangeTimerRef.current);
+        return {
+          ...edge,
+          type:
+            remoteEdge.type ||
+            "straight",
+          sourceHandle:
+            remoteEdge.sourceHandle ||
+            edge.sourceHandle,
+          targetHandle:
+            remoteEdge.targetHandle ||
+            edge.targetHandle,
+        };
+      })
+    );
+  }
 
-        arrangeTimerRef.current = setTimeout(() => {
-          setIsArranging(false);
+  queueMicrotask(() => {
+    applyingRemoteRef.current =
+      false;
+  });
 
-          setNodes((nds) =>
-            nds.map((node) => ({
-              ...node,
-              className: "",
-            }))
-          );
-        }, 450);
-      }
+  return;
+}
 
       if (event === "nodes_change") {
         setNodes((nds) =>
@@ -2425,277 +2784,318 @@ const uploadImage = async (nodeId, file) => {
     session.user.id
   );
 
-  useEffect(() => {
-    let cancelled = false;
-    let editChannel;
-    let cursorChannel;
+useEffect(() => {
+  if (!session?.user?.id || !mindmap?.id) {
+    return;
+  }
 
-    const connectCollaboration = async () => {
-      try {
-        await supabase.realtime.setAuth();
+  let cancelled = false;
 
-        if (cancelled) return;
+  const editTopic =
+    `mindmap-edit:${mindmap.id}`;
 
-        const editTopic = `mindmap-edit:${mindmap.id}`;
-        const cursorTopic = `mindmap-cursor:${mindmap.id}`;
+  const cursorTopic =
+    `mindmap-cursor:${mindmap.id}`;
 
-        editChannel = supabase.channel(
-          editTopic,
-          {
-            config: { private: true },
+  const editChannel =
+    supabase.channel(editTopic, {
+      config: {
+        private: true,
+      },
+    });
+
+  const cursorChannel =
+    supabase.channel(cursorTopic, {
+      config: {
+        private: true,
+      },
+    });
+
+  editChannelRef.current =
+    editChannel;
+
+  cursorChannelRef.current =
+    cursorChannel;
+
+  let editReady = false;
+  let cursorReady = false;
+
+  const markReady = () => {
+    if (
+      cancelled ||
+      !editReady ||
+      !cursorReady
+    ) {
+      return;
+    }
+
+    setCollabConnected(true);
+
+    cursorChannel.track({
+      userId: session.user.id,
+      email:
+        session.user.email || "",
+      displayName:
+        getDisplayName(session.user),
+      avatarUrl:
+        getAvatarUrl(session.user),
+      avatarInitial:
+        getAvatarInitial(
+          session.user
+        ),
+      color:
+        getUserColor(
+          session.user.id
+        ),
+      isOwner,
+      role:
+        isOwner
+          ? "owner"
+          : mindmap.role || "viewer",
+    });
+
+    editChannel.send({
+      type: "broadcast",
+      event: "snapshot_request",
+      payload: {
+        senderId:
+          session.user.id,
+      },
+    });
+  };
+
+  const syncPresence = () => {
+    if (cancelled) {
+      return;
+    }
+
+    const state =
+      cursorChannel.presenceState();
+
+    const users = [];
+
+    Object.values(state).forEach(
+      (presences) => {
+        presences.forEach(
+          (presence) => {
+            if (
+              presence.userId ===
+              session.user.id
+            ) {
+              return;
+            }
+
+            users.push(presence);
           }
         );
+      }
+    );
 
-        cursorChannel = supabase.channel(
-          cursorTopic,
-          {
-            config: { private: true },
-          }
-        );
+    const uniqueUsers =
+      Array.from(
+        new Map(
+          users.map((user) => [
+            user.userId,
+            user,
+          ])
+        ).values()
+      );
 
-        editChannel
-          .on(
-            "broadcast",
-            { event: "node_add" },
-            ({ payload }) =>
-              applyRemoteOperation(
-                "node_add",
-                payload
-              )
-          )
-          .on(
-            "broadcast",
-            { event: "edge_add" },
-            ({ payload }) =>
-              applyRemoteOperation(
-                "edge_add",
-                payload
-              )
-          )
-          .on(
-            "broadcast",
-            { event: "nodes_delete" },
-            ({ payload }) =>
-              applyRemoteOperation(
-                "nodes_delete",
-                payload
-              )
-          )
-          .on(
-            "broadcast",
-            { event: "node_patch" },
-            ({ payload }) =>
-              applyRemoteOperation(
-                "node_patch",
-                payload
-              )
-          )
-          .on(
-            "broadcast",
-            { event: "node_positions" },
-            ({ payload }) =>
-              applyRemoteOperation(
-                "node_positions",
-                payload
-              )
-          )
-          .on(
-            "broadcast",
-            { event: "nodes_change" },
-            ({ payload }) =>
-              applyRemoteOperation(
-                "nodes_change",
-                payload
-              )
-          )
-          .on(
-            "broadcast",
-            { event: "edges_change" },
-            ({ payload }) =>
-              applyRemoteOperation(
-                "edges_change",
-                payload
-              )
-          )
-          .on(
-            "broadcast",
-            { event: "arrange" },
-            ({ payload }) =>
-              applyRemoteOperation(
-                "arrange",
-                payload
-              )
-          )
-          .on(
-            "broadcast",
-            { event: "snapshot_request" },
-            ({ payload }) =>
-              applyRemoteOperation(
-                "snapshot_request",
-                payload
-              )
-          )
-          .on(
-            "broadcast",
-            { event: "snapshot" },
-            ({ payload }) =>
-              applyRemoteOperation(
-                "snapshot",
-                payload
-              )
-          );
+    setCollaborators(
+      uniqueUsers
+    );
+  };
 
-        cursorChannel
-          .on(
-            "broadcast",
-            { event: "cursor" },
-            ({ payload }) => {
-              if (
-                !payload ||
-                payload.userId === session.user.id
-              ) {
-                return;
-              }
+  cursorChannel.on(
+    "presence",
+    { event: "sync" },
+    syncPresence
+  );
 
-              setRemoteCursors((current) => ({
-                ...current,
-                [payload.userId]: {
-                  ...payload,
-                  lastSeen: Date.now(),
-                },
-              }));
-            }
-          )
-          .on(
-            "presence",
-            { event: "sync" },
-            () => {
-              const state =
-                cursorChannel.presenceState();
+  cursorChannel.on(
+    "presence",
+    { event: "join" },
+    syncPresence
+  );
 
-              const allUsers = Object.values(
-                state
-              ).flat();
+  cursorChannel.on(
+    "presence",
+    { event: "leave" },
+    syncPresence
+  );
 
-              const unique = new Map();
+  cursorChannel.on(
+    "broadcast",
+    { event: "cursor" },
+    ({ payload }) => {
+      if (
+        !payload ||
+        payload.senderId ===
+          session.user.id
+      ) {
+        return;
+      }
 
-              allUsers.forEach((user) => {
-                if (user?.userId) {
-                  unique.set(
-                    user.userId,
-                    user
-                  );
-                }
-              });
+      setRemoteCursors(
+        (current) => ({
+          ...current,
+          [payload.senderId]: {
+            ...payload,
+            lastSeen:
+              Date.now(),
+          },
+        })
+      );
+    }
+  );
 
-              setCollaborators(
-                [...unique.values()].filter(
-                  (user) =>
-                    user.userId !==
-                    session.user.id
-                )
-              );
-            }
-          );
+  editChannel.on(
+    "broadcast",
+    {
+      event: "*",
+    },
+    ({ event, payload }) => {
+      if (
+        !payload ||
+        payload.senderId ===
+          session.user.id
+      ) {
+        return;
+      }
 
-        const statuses = await Promise.all([
-          new Promise((resolve) => {
-            editChannel.subscribe((status) => {
-              resolve(status);
-            });
-          }),
-          new Promise((resolve) => {
-            cursorChannel.subscribe(
-              (status) => {
-                resolve(status);
-              }
-            );
-          }),
-        ]);
+      applyRemoteOperation(
+        event,
+        payload
+      );
+    }
+  );
 
-        if (cancelled) return;
+  editChannel.subscribe(
+    (status, error) => {
+      console.log(
+        "[YHMind Edit Realtime]",
+        status,
+        error || ""
+      );
 
-        if (
-          statuses[0] !== "SUBSCRIBED" ||
-          statuses[1] !== "SUBSCRIBED"
-        ) {
-          console.error(
-            "协作频道连接失败:",
-            statuses
-          );
-          return;
+      if (status === "SUBSCRIBED") {
+        editReady = true;
+        markReady();
+        return;
+      }
+
+      if (
+        status ===
+          "CHANNEL_ERROR" ||
+        status ===
+          "TIMED_OUT" ||
+        status === "CLOSED"
+      ) {
+        if (!cancelled) {
+          setCollabConnected(false);
         }
 
-        editChannelRef.current = editChannel;
-        cursorChannelRef.current =
-          cursorChannel;
-
-        setCollabConnected(true);
-
-        await cursorChannel.track({
-          userId: session.user.id,
-          email: session.user.email,
-          name: getDisplayName(
-            session.user
-          ),
-          avatar: getAvatarUrl(
-            session.user
-          ),
-          color: currentUserColor,
-        });
-
-        await editChannel.send({
-          type: "broadcast",
-          event: "snapshot_request",
-          payload: {
-            senderId: session.user.id,
-          },
-        });
-      } catch (error) {
         console.error(
-          "协作系统连接失败:",
+          "[YHMind Edit Channel Error]",
           error
         );
       }
-    };
+    }
+  );
 
-    connectCollaboration();
-
-    return () => {
-      cancelled = true;
-      clearTimeout(
-        positionBroadcastTimerRef.current
-      );
-      cancelAnimationFrame(
-        cursorFrameRef.current
+  cursorChannel.subscribe(
+    (status, error) => {
+      console.log(
+        "[YHMind Cursor Realtime]",
+        status,
+        error || ""
       );
 
-      editChannelRef.current = null;
-      cursorChannelRef.current = null;
-
-      if (editChannel) {
-        supabase.removeChannel(
-          editChannel
-        );
+      if (status === "SUBSCRIBED") {
+        cursorReady = true;
+        markReady();
+        return;
       }
 
-      if (cursorChannel) {
-        supabase.removeChannel(
-          cursorChannel
+      if (
+        status ===
+          "CHANNEL_ERROR" ||
+        status ===
+          "TIMED_OUT" ||
+        status === "CLOSED"
+      ) {
+        if (!cancelled) {
+          setCollabConnected(false);
+        }
+
+        console.error(
+          "[YHMind Cursor Channel Error]",
+          error
         );
       }
+    }
+  );
 
-      setCollaborators([]);
-      setRemoteCursors({});
-      setCollabConnected(false);
-    };
-  }, [
-    mindmap.id,
-    session.user.id,
-    session.user.email,
-    currentUserColor,
-    canEdit,
-  ]);
+  const cursorCleanupTimer =
+    setInterval(() => {
+      const now = Date.now();
+
+      setRemoteCursors(
+        (current) => {
+          const next = {
+            ...current,
+          };
+
+          Object.entries(
+            next
+          ).forEach(
+            ([userId, cursor]) => {
+              if (
+                now -
+                  cursor.lastSeen >
+                3000
+              ) {
+                delete next[userId];
+              }
+            }
+          );
+
+          return next;
+        }
+      );
+    }, 1000);
+
+  return () => {
+    cancelled = true;
+
+    clearInterval(
+      cursorCleanupTimer
+    );
+
+    editChannelRef.current =
+      null;
+
+    cursorChannelRef.current =
+      null;
+
+    setCollabConnected(false);
+    setCollaborators([]);
+    setRemoteCursors({});
+
+    supabase.removeChannel(
+      editChannel
+    );
+
+    supabase.removeChannel(
+      cursorChannel
+    );
+  };
+}, [
+  session?.user?.id,
+  mindmap?.id,
+  isOwner,
+  mindmap?.role,
+]);
 
   useEffect(() => {
     const cleanup = setInterval(() => {
@@ -2770,131 +3170,205 @@ const uploadImage = async (nodeId, file) => {
      键盘快捷键
   ========================= */
 
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (editingNode) {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          finishEditing();
-        }
-
-        if (event.key === "Escape") {
-          event.preventDefault();
-          setEditingNode(null);
-          setEditingValue("");
-        }
-
-        return;
-      }
-
-      const target = event.target;
-
-      if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-      if (
-  event.ctrlKey &&
-  event.key.toLowerCase() === "a"
-) {
-  if (!canEdit) {
-    return;
-  }
-
-  event.preventDefault();
-
-  const allIds = nodes.map(
-    (node) => node.id
-  );
-
-  setSelectedNodes(allIds);
-  setSelectedNode(null);
-
-  setNodes((nds) =>
-    nds.map((node) => ({
-      ...node,
-      selected: true,
-    }))
-  );
-
-  return;
-}
-if (event.ctrlKey && event.key.toLowerCase() === "z") {
-  event.preventDefault();
-
-  if (event.shiftKey) {
-    redo();
-  } else {
-    undo();
-  }
-
-  return;
-}
-
-
-      if (!selectedNode) return;
-
-      if (event.key === "Tab") {
-        event.preventDefault();
-        createChildNode(selectedNode);
-      }
-
+ useEffect(() => {
+  const handleKeyDown = (event) => {
+    /*
+     * 正在编辑节点文字时，
+     * 只处理 Enter / Escape，
+     * 不触发撤回。
+     */
+    if (editingNode) {
       if (event.key === "Enter") {
         event.preventDefault();
-        createSiblingNode(selectedNode);
+        finishEditing();
+        return;
       }
 
-      if (
-  event.key === "Delete" ||
-  event.key === "Backspace"
-) {
-  event.preventDefault();
-
-  if (selectedNodes.length > 1) {
-    deleteSelectedNodes();
-  } else if (selectedNode) {
-    deleteNodeById(selectedNode);
-  }
-
-  return;
-}
-
-      if (event.key === "F2") {
+      if (event.key === "Escape") {
         event.preventDefault();
-
-        const node = nodes.find(
-          (item) => item.id === selectedNode
-        );
-
-        if (node) {
-          startEditing(
-            node.id,
-            node.data.label
-          );
-        }
+        setEditingNode(null);
+        setEditingValue("");
+        return;
       }
-    };
 
-    window.addEventListener(
+      return;
+    }
+
+    const target = event.target;
+
+    /*
+     * 在普通输入框里输入时，
+     * 不拦截快捷键。
+     */
+    if (
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLTextAreaElement
+    ) {
+      return;
+    }
+
+    const key = event.key.toLowerCase();
+
+    /*
+     * =========================
+     * 撤回 / 重做
+     * =========================
+     *
+     * Ctrl + Z
+     * Ctrl + Shift + Z
+     * Ctrl + Y
+     *
+     * Mac 同时支持 Command。
+     */
+    const modifierKey =
+      event.ctrlKey || event.metaKey;
+
+    if (
+      modifierKey &&
+      key === "z"
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (event.shiftKey) {
+        redo();
+      } else {
+        undo();
+      }
+
+      return;
+    }
+
+    if (
+      modifierKey &&
+      key === "y"
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      redo();
+
+      return;
+    }
+
+    /*
+     * =========================
+     * Ctrl + A 全选
+     * =========================
+     */
+    if (
+      modifierKey &&
+      key === "a"
+    ) {
+      if (!canEdit) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      const allIds = nodes.map(
+        (node) => node.id
+      );
+
+      setSelectedNodes(allIds);
+      setSelectedNode(null);
+
+      setNodes((nds) =>
+        nds.map((node) => ({
+          ...node,
+          selected: true,
+        }))
+      );
+
+      return;
+    }
+
+    /*
+     * 后面的快捷键需要先有节点选择。
+     */
+    if (!selectedNode) {
+      return;
+    }
+
+    /*
+     * Tab = 添加子节点
+     */
+    if (event.key === "Tab") {
+      event.preventDefault();
+
+      createChildNode(selectedNode);
+
+      return;
+    }
+
+    /*
+     * Enter = 添加同级节点
+     */
+    if (event.key === "Enter") {
+      event.preventDefault();
+
+      createSiblingNode(selectedNode);
+
+      return;
+    }
+
+    /*
+     * Delete / Backspace = 删除
+     */
+    if (
+      event.key === "Delete" ||
+      event.key === "Backspace"
+    ) {
+      event.preventDefault();
+
+      if (selectedNodes.length > 1) {
+        deleteSelectedNodes();
+      } else if (selectedNode) {
+        deleteNodeById(selectedNode);
+      }
+
+      return;
+    }
+
+    /*
+     * F2 = 编辑
+     */
+    if (event.key === "F2") {
+      event.preventDefault();
+
+      const node = nodes.find(
+        (item) => item.id === selectedNode
+      );
+
+      if (node) {
+        startEditing(
+          node.id,
+          node.data.label
+        );
+      }
+
+      return;
+    }
+  };
+
+  window.addEventListener(
+    "keydown",
+    handleKeyDown
+  );
+
+  return () => {
+    window.removeEventListener(
       "keydown",
       handleKeyDown
     );
-
-    return () => {
-      window.removeEventListener(
-        "keydown",
-        handleKeyDown
-      );
-    };
-  }, [
+  };
+}, [
   selectedNode,
   selectedNodes,
   editingNode,
-  editingValue,
   nodes,
-  edges,
+  canEdit,
 ]);
 
   /* =========================
@@ -3349,7 +3823,10 @@ return (
   }}
 />
           <ReactFlow
-          
+          onInit={(instance) => {
+  reactFlowInstanceRef.current =
+    instance;
+}}
           selectionKeyCode="Control"
 multiSelectionKeyCode="Control"
 selectionMode="partial"
