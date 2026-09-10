@@ -12,7 +12,8 @@ import {
   Controls,
   MiniMap,
   Handle,
-  Position,
+Position,
+NodeResizer,
   addEdge,
   applyNodeChanges,
   applyEdgeChanges,
@@ -51,6 +52,13 @@ function MindNode({ data, selected }) {
         type="target"
         position={Position.Left}
       />
+
+      <Handle
+  id="target-center"
+  type="target"
+  position={Position.Left}
+  className="node-center-target"
+/>
 
       <Handle
         id="source-right"
@@ -128,9 +136,120 @@ function MindNode({ data, selected }) {
     </div>
   );
 }
+function NoteNode({
+  id,
+  data,
+  selected,
+  width,
+  height,
+}) {
+  return (
+    <div
+      className={`note-node ${
+        selected ? "selected" : ""
+      }`}
+      style={{
+        width:
+          width ||
+          data?.width ||
+          180,
+        height:
+          height ||
+          data?.height ||
+          150,
+        background:
+          data?.color || "#FFF8B8",
+      }}
+    >
+      <NodeResizer
+        isVisible={selected}
+        keepAspectRatio={false}
+        minWidth={40}
+        minHeight={30}
+        maxWidth={600}
+        maxHeight={500}
+        color="#777"
+        lineStyle={{
+          borderWidth: 1,
+        }}
+        handleStyle={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+        }}
+      />
 
+     {/* 上 */}
+<Handle
+  id="note-target-top"
+  type="target"
+  position={Position.Top}
+  className="note-connect-target"
+/>
+
+<Handle
+  id="note-source-top"
+  type="source"
+  position={Position.Top}
+  className="note-connect-handle"
+/>
+
+{/* 右 */}
+<Handle
+  id="note-target-right"
+  type="target"
+  position={Position.Right}
+  className="note-connect-target"
+/>
+
+<Handle
+  id="note-source-right"
+  type="source"
+  position={Position.Right}
+  className="note-connect-handle"
+/>
+
+{/* 下 */}
+<Handle
+  id="note-target-bottom"
+  type="target"
+  position={Position.Bottom}
+  className="note-connect-target"
+/>
+
+<Handle
+  id="note-source-bottom"
+  type="source"
+  position={Position.Bottom}
+  className="note-connect-handle"
+/>
+
+{/* 左 */}
+<Handle
+  id="note-target-left"
+  type="target"
+  position={Position.Left}
+  className="note-connect-target"
+/>
+
+<Handle
+  id="note-source-left"
+  type="source"
+  position={Position.Left}
+  className="note-connect-handle"
+/>
+
+      <div className="note-pin" />
+
+      <div className="note-content">
+        {data?.label || "双击编辑笔记"}
+      </div>
+    </div>
+  );
+}
 const nodeTypes = {
   mindNode: MindNode,
+  noteNode: NoteNode,
 };
 
 const defaultNodes = [
@@ -1912,24 +2031,62 @@ setEdges(arrangedEdges);
 };
 
   const onConnect = useCallback(
-    (params) => {
-      if (!canEdit) return;
+  (params) => {
+    if (!canEdit) return;
 
-      const edge = {
-        ...params,
-        type: "smoothstep",
-        id: params.id || `edge-${Date.now()}`,
-      };
+    const sourceNode = nodes.find(
+      (node) => node.id === params.source
+    );
 
-      setEdges((eds) => addEdge(edge, eds));
+    const targetNode = nodes.find(
+      (node) => node.id === params.target
+    );
 
-      broadcastEdit("edge_add", {
-        edge,
-      });
-    },
-    [setEdges, canEdit, broadcastEdit]
-  );
+    if (!sourceNode || !targetNode) {
+      return;
+    }
 
+    const isNoteEdge =
+      sourceNode.type === "noteNode" ||
+      targetNode.type === "noteNode";
+
+    const edge = {
+      ...params,
+      id:
+        params.id ||
+        `edge-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 8)}`,
+      type: "smoothstep",
+
+      data: {
+        ...(params.data || {}),
+        isNoteEdge,
+      },
+
+      style: isNoteEdge
+        ? {
+            stroke: "#F59E0B",
+            strokeWidth: 2,
+          }
+        : undefined,
+    };
+
+    setEdges((eds) =>
+      addEdge(edge, eds)
+    );
+
+    broadcastEdit("edge_add", {
+      edge,
+    });
+  },
+  [
+    canEdit,
+    nodes,
+    setEdges,
+    broadcastEdit,
+  ]
+);
   /* =========================
      创建节点
   ========================= */
@@ -1937,61 +2094,119 @@ setEdges(arrangedEdges);
   if (!canEdit) return;
 
   const parent = nodes.find(
-      (node) => node.id === parentId
-    );
+    (node) => node.id === parentId
+  );
 
-    if (!parent) return;
+  if (!parent) return;
 
-    const children = nodes.filter((node) =>
-      edges.some(
-        (edge) =>
-          edge.source === parentId &&
-          edge.target === node.id
-      )
-    );
+  const children = nodes.filter((node) =>
+    edges.some(
+      (edge) =>
+        edge.source === parentId &&
+        edge.target === node.id
+    )
+  );
 
-    const newId = `node-${Date.now()}`;
+  const newId = `node-${Date.now()}`;
 
-    const newNode = {
-      id: newId,
-      type: "mindNode",
-      position: {
-        x: parent.position.x + 280,
-        y:
-          parent.position.y +
-          children.length * 100,
-      },
-      data: {
-        label: "新节点",
-        color: "#ffffff",
-      },
-    };
-
-    setNodes((nds) => [...nds, newNode]);
-
-    const newEdge = {
-      id: `edge-${parentId}-${newId}`,
-      source: parentId,
-      target: newId,
-      type: "smoothstep",
-    };
-
-    setEdges((eds) => [
-      ...eds,
-      newEdge,
-    ]);
-
-    broadcastEdit("node_add", {
-      node: newNode,
-      edge: newEdge,
-    });
-
-    setSelectedNode(newId);
-
-    setTimeout(() => {
-      startEditing(newId, "新节点");
-    }, 50);
+  const newNode = {
+    id: newId,
+    type: "mindNode",
+    position: {
+      x: parent.position.x + 280,
+      y:
+        parent.position.y +
+        children.length * 100,
+    },
+    data: {
+      label: "新节点",
+      color: "#ffffff",
+    },
   };
+
+  setNodes((nds) => [
+    ...nds,
+    newNode,
+  ]);
+
+  const newEdge = {
+    id: `edge-${parentId}-${newId}`,
+    source: parentId,
+    target: newId,
+    type: "smoothstep",
+  };
+
+  setEdges((eds) => [
+    ...eds,
+    newEdge,
+  ]);
+
+  broadcastEdit("node_add", {
+    node: newNode,
+    edge: newEdge,
+  });
+
+  setSelectedNode(newId);
+
+  setTimeout(() => {
+    startEditing(newId, "新节点");
+  }, 50);
+};
+const createNote = useCallback(() => {
+  if (!canEdit) return;
+
+  const parentId =
+    contextMenu?.nodeId ||
+    selectedNode ||
+    null;
+
+  const referenceNode = parentId
+    ? nodes.find((node) => node.id === parentId)
+    : null;
+
+  const position = referenceNode
+    ? {
+        x: referenceNode.position.x + 220,
+        y: referenceNode.position.y + 80,
+      }
+    : {
+        x: 0,
+        y: 0,
+      };
+
+  const noteNode = {
+    id: `note-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`,
+    type: "noteNode",
+    position,
+    data: {
+  label: "双击编辑笔记",
+  color: "#FFF8B8",
+  isNote: true,
+  width: 180,
+  height: 150,
+},
+  };
+
+  setNodes((current) => [
+    ...current,
+    noteNode,
+  ]);
+
+  broadcastEdit("node_add", {
+    node: noteNode,
+  });
+
+  setContextMenu(null);
+}, [
+  canEdit,
+  contextMenu,
+  selectedNode,
+  nodes,
+  setNodes,
+  broadcastEdit,
+]);
 
   const createSiblingNode = (nodeId) => {
   if (!canEdit) return;
@@ -2589,6 +2804,59 @@ const uploadImage = async (nodeId, file) => {
         );
       }
 
+      if (event === "node_positions") {
+  const positions = payload.positions || {};
+
+  setNodes((nds) =>
+    nds.map((node) => {
+      const position = positions[node.id];
+
+      if (!position) return node;
+
+      return {
+        ...node,
+        position,
+      };
+    })
+  );
+}
+
+if (event === "node_resize") {
+  const {
+    nodeId,
+    width,
+    height,
+  } = payload;
+
+  applyingRemoteRef.current = true;
+
+  setNodes((currentNodes) =>
+    currentNodes.map((node) =>
+      node.id === nodeId
+        ? {
+            ...node,
+            width,
+            height,
+            data: {
+              ...node.data,
+              width,
+              height,
+            },
+          }
+        : node
+    )
+  );
+
+  queueMicrotask(() => {
+    applyingRemoteRef.current = false;
+  });
+
+  return;
+}
+
+if (event === "arrange") {
+  // 你原来的 arrange 代码
+}
 if (event === "arrange") {
   const positions =
     payload.positions || {};
@@ -2710,7 +2978,40 @@ if (event === "arrange") {
       if (applyingRemoteRef.current || !canEdit) {
         return;
       }
+const dimensionChanges =
+  changes.filter(
+    (change) =>
+      change.type === "dimensions" &&
+      change.id
+  );
 
+if (dimensionChanges.length > 0) {
+  dimensionChanges.forEach(
+    (change) => {
+      const width =
+        change.dimensions?.width;
+
+      const height =
+        change.dimensions?.height;
+
+      if (
+        width == null ||
+        height == null
+      ) {
+        return;
+      }
+
+      broadcastEdit(
+        "node_resize",
+        {
+          nodeId: change.id,
+          width,
+          height,
+        }
+      );
+    }
+  );
+}
       const positionChanges = changes.filter(
         (change) =>
           change.type === "position" &&
@@ -3827,11 +4128,14 @@ return (
   reactFlowInstanceRef.current =
     instance;
 }}
+  connectionRadius={30}
           selectionKeyCode="Control"
 multiSelectionKeyCode="Control"
 selectionMode="partial"
 nodesDraggable={canEdit && editingNode === null}
 nodesConnectable={canEdit}
+panOnDrag={editingNode === null}
+selectionOnDrag={editingNode === null}
             nodes={nodes.map((node) => {
   if (editingNode !== node.id) {
     return node;
@@ -3842,32 +4146,46 @@ nodesConnectable={canEdit}
     data: {
       ...node.data,
       label: (
-        <input
-          className="node-edit-input"
-          autoFocus
-          value={editingValue}
-          onChange={(event) =>
-            setEditingValue(event.target.value)
-          }
-          onBlur={finishEditing}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              finishEditing();
-            }
+       <input
+  className="nodrag node-edit-input"
+  autoFocus
+  value={editingValue}
+  onPointerDown={(event) => {
+    event.stopPropagation();
+  }}
+  onMouseDown={(event) => {
+    event.stopPropagation();
+  }}
+  onClick={(event) => {
+    event.stopPropagation();
+  }}
+  onChange={(event) =>
+    setEditingValue(event.target.value)
+  }
+  onBlur={finishEditing}
+  onKeyDown={(event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      finishEditing();
+    }
 
-            if (event.key === "Escape") {
-              event.preventDefault();
-              setEditingNode(null);
-              setEditingValue("");
-            }
-          }}
-        />
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setEditingNode(null);
+      setEditingValue("");
+    }
+  }}
+/>
       ),
     },
   };
 })}
-edges={edges}
+edges={edges.map((edge) => ({
+  ...edge,
+  className: edge.data?.isNoteEdge
+    ? "note-edge"
+    : edge.className,
+}))}
 onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
             onConnect={onConnect}
@@ -3927,6 +4245,7 @@ onNodesChange={handleNodesChange}
           </ReactFlow>
 
           {contextMenu && (
+            
             <div
               className="node-context-menu"
               style={{
@@ -3937,6 +4256,25 @@ onNodesChange={handleNodesChange}
                 event.stopPropagation()
               }
             >
+              <button
+  onClick={() => {
+    createChildNode(contextMenu.nodeId);
+    setContextMenu(null);
+  }}
+>
+  ＋ 添加节点
+</button>
+
+<button
+  onClick={() => {
+    createNote();
+    setContextMenu(null);
+  }}
+>
+  📝 添加笔记
+</button>
+
+<div className="context-divider" />
               <button
                 onClick={() => {
                   const node = nodes.find(
