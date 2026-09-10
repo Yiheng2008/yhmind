@@ -978,3 +978,29 @@ button {
   stroke-width: 4px !important;
   filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.5));
 }
+.mind-node {
+  position: relative;
+  width: fit-content;
+  min-width: 120px;
+  max-width: 500px;
+  box-sizing: border-box;
+
+  padding: 14px 22px;
+
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 10px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  white-space: normal;
+}
+
+.node-content {
+  width: max-content;
+  max-width: 456px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
