@@ -47,7 +47,6 @@ function MindNode({ data, selected }) {
           data.color || "#ffffff",
       }}
     >
-      {/* 正常手动连接用的可见连接点 */}
       <Handle
         id="target-left"
         type="target"
@@ -55,19 +54,11 @@ function MindNode({ data, selected }) {
       />
 
       <Handle
-  id="target-center"
-  type="target"
-  position={Position.Left}
-  className="node-center-target"
-/>
-
-      <Handle
         id="source-right"
         type="source"
         position={Position.Right}
       />
 
-      {/* 排列系统使用的隐藏连接点 */}
       <Handle
         id="target-top"
         type="target"
@@ -2140,9 +2131,14 @@ setEdges(arrangedEdges);
   };
 
   setEdges((eds) => [
-    ...eds,
-    newEdge,
-  ]);
+  ...eds,
+  newEdge,
+]);
+
+requestAnimationFrame(() => {
+  updateNodeInternals(parentId);
+  updateNodeInternals(newId);
+});
 
   broadcastEdit("node_add", {
     node: newNode,

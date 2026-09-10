@@ -171,44 +171,44 @@ button {
 }
 
 .mind-node {
-  min-width: 150px;
-  min-height: 52px;
-  padding: 0 18px;
-  border-radius: 14px;
+  position: relative;
+  min-width: 100px;
+  min-height: 42px;
+  width: max-content;
+  max-width: 500px;
+  padding: 10px 18px;
+
+  border: 1px solid #dfe1e5;
+  border-radius: 10px;
+  box-sizing: border-box;
+
   background: white;
-  border: 2px solid transparent;
-  box-shadow:
-    0 4px 14px rgba(0, 0, 0, 0.08),
-    0 1px 3px rgba(0, 0, 0, 0.06);
+
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06);
+
   display: flex;
   align-items: center;
   justify-content: center;
+
   transition:
     border-color 0.15s,
     box-shadow 0.15s,
     transform 0.15s;
 }
 
-.mind-node:hover {
-  box-shadow:
-    0 8px 22px rgba(0, 0, 0, 0.12),
-    0 2px 5px rgba(0, 0, 0, 0.06);
-}
-
-.mind-node.selected {
-  border-color: #111827;
-  box-shadow:
-    0 0 0 3px rgba(17, 24, 39, 0.1),
-    0 8px 22px rgba(0, 0, 0, 0.12);
-}
-
 .node-content {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 15px;
+  gap: 7px;
+
+  max-width: 464px;
+
+  font-size: 14px;
   font-weight: 600;
-  white-space: nowrap;
+
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .node-emoji {
@@ -656,7 +656,8 @@ button {
 ========================= */
 
 .node-edit-input {
-  width: 120px;
+  min-width: 80px;
+width: auto;
   border: none;
   outline: none;
   background: transparent;
@@ -665,44 +666,6 @@ button {
   text-align: center;
 }
 
-.mind-node {
-  min-width: 100px;
-  min-height: 42px;
-  padding: 0 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid #dfe1e5;
-  border-radius: 10px;
-  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.06);
-  transition:
-    border-color 0.15s,
-    box-shadow 0.15s,
-    transform 0.15s;
-}
-
-.mind-node.selected {
-  border-color: #111;
-  box-shadow:
-    0 0 0 2px rgba(0, 0, 0, 0.08),
-    0 5px 18px rgba(0, 0, 0, 0.09);
-}
-
-.mind-node:hover {
-  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.09);
-}
-
-.node-content {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
-  font-size: 14px;
-}
-
-.node-emoji {
-  font-size: 17px;
-}
 
 /* =========================
    Right Click Menu
@@ -791,9 +754,6 @@ button {
    Sticky Note
 ========================= */
 
-/* =========================
-   Sticky Note
-========================= */
 
 .note-node {
   position: relative;
@@ -977,30 +937,4 @@ button {
   stroke: #f59e0b !important;
   stroke-width: 4px !important;
   filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.5));
-}
-.mind-node {
-  position: relative;
-  width: fit-content;
-  min-width: 120px;
-  max-width: 500px;
-  box-sizing: border-box;
-
-  padding: 14px 22px;
-
-  border: 1px solid rgba(0, 0, 0, 0.12);
-  border-radius: 10px;
-
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  white-space: normal;
-}
-
-.node-content {
-  width: max-content;
-  max-width: 456px;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
 }
