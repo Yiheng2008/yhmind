@@ -938,3 +938,13 @@ width: auto;
   stroke-width: 4px !important;
   filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.5));
 }
+.mind-node.selected {
+  border-color: #111;
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.08),
+    0 5px 18px rgba(0, 0, 0, 0.09);
+}
+.mind-node:hover {
+  box-shadow:
+    0 5px 18px rgba(0, 0, 0, 0.09);
+}
