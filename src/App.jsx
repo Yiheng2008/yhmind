@@ -12,13 +12,14 @@ import {
   Controls,
   MiniMap,
   Handle,
-Position,
-NodeResizer,
+  Position,
+  NodeResizer,
   addEdge,
   applyNodeChanges,
   applyEdgeChanges,
   useNodesState,
   useEdgesState,
+  useUpdateNodeInternals,
 } from "@xyflow/react";
 import { createClient } from "@supabase/supabase-js";
 
@@ -1416,6 +1417,8 @@ const canEdit =
   const loadShares = async () => {
   if (!isOwner) return;
 
+const updateNodeInternals = useUpdateNodeInternals();
+
   const { data, error } = await supabase
     .from("mindmap_members")
     .select("id, shared_with_email, role")
@@ -2303,36 +2306,46 @@ const createNote = useCallback(() => {
   if (!canEdit) return;
   if (!editingNode) return;
 
-    const value = editingValue.trim();
+  const nodeId = editingNode;
+  const value = editingValue.trim();
 
-    if (value) {
-      setNodes((nds) =>
-        nds.map((node) =>
-          node.id === editingNode
-            ? {
-                ...node,
-                data: {
-                  ...node.data,
-                  label: value,
-                },
-              }
-            : node
-        )
-      );
+  if (value) {
+    setNodes((nds) =>
+      nds.map((node) =>
+        node.id === nodeId
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                label: value,
+              },
+            }
+          : node
+      )
+    );
 
-      broadcastEdit("node_patch", {
-        nodeId: editingNode,
-        patch: {
-          data: {
-            label: value,
-          },
+    broadcastEdit("node_patch", {
+      nodeId,
+      patch: {
+        data: {
+          label: value,
         },
-      });
-    }
+      },
+    });
 
-    setEditingNode(null);
-    setEditingValue("");
-  };
+    // 等 DOM 更新完之后，让 React Flow 重新测量节点
+    requestAnimationFrame(() => {
+      updateNodeInternals(nodeId);
+
+      requestAnimationFrame(() => {
+        updateNodeInternals(nodeId);
+      });
+    });
+  }
+
+  setEditingNode(null);
+  setEditingValue("");
+};
 
 const deleteNodeById = (nodeId) => {
   if (!canEdit) return;
